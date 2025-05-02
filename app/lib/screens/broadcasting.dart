@@ -72,11 +72,16 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
 
     // 4) Sign the challenge
     final sigBytes = await KeyUtils.signChallenge(challengeBytes);
+    final derB64 = base64Encode(sigBytes);
+    print('[BLE-DBG] DER signature (base64): $derB64');
+    // Hex dump for extra certainty:
+    final hex = sigBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    print('[BLE-DBG] DER signature (hex): $hex');
     final b64sig = base64Encode(sigBytes);
     setState(() => _logs.insert(0, '✍️ Signature (Base64): $b64sig'));
 
     // 5) Send the signature back to the browser over BLE
-    await NativeBlePlugin.sendSignature(b64sig);
+await NativeBlePlugin.sendSignature(derB64);
     setState(() => _logs.insert(0, '📤 Signature sent to browser'));
   }
 

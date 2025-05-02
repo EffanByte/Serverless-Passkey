@@ -24,6 +24,38 @@ BigInt bytesToBigInt(Uint8List bytes) {
   return result;
 }
 
+Uint8List _encodeSignatureDer(ECSignature sig) {
+  // Ensure positive integers per DER rules:
+  Uint8List _pos(Uint8List bs) {
+    if (bs.isNotEmpty && (bs[0] & 0x80) != 0) {
+      return Uint8List.fromList([0, ...bs]);
+    }
+    return bs;
+  }
+
+  final r = _pos(bigIntToBytes(sig.r));
+  final s = _pos(bigIntToBytes(sig.s));
+
+  // Build INTEGER r
+  final body = BytesBuilder();
+  body.addByte(0x02);
+  body.addByte(r.length);
+  body.add(r);
+  // Build INTEGER s
+  body.addByte(0x02);
+  body.addByte(s.length);
+  body.add(s);
+
+  final bodyBytes = body.toBytes();
+
+  // Wrap in SEQUENCE
+  final seq = BytesBuilder();
+  seq.addByte(0x30);
+  seq.addByte(bodyBytes.length);
+  seq.add(bodyBytes);
+  return seq.toBytes();
+}
+
 /// Encodes an [ECSignature] as 64-byte r∥s.
 Uint8List _encodeSignature(ECSignature sig) {
   final rBytes = bigIntToBytes(sig.r);
@@ -62,18 +94,30 @@ class KeyUtils {
     final domain = ECDomainParameters('prime256v1');
     final privateKey = ECPrivateKey(d, domain);
 
-    // 3. Hash the challenge
-    final digest = SHA256Digest();
-    final hashed = digest.process(challenge);
-
-    // 4. Sign deterministically
+    // Init the signer (it will hash internally once)
     final signer = Signer('SHA-256/DET-ECDSA')
       ..init(true, PrivateKeyParameter<ECPrivateKey>(privateKey));
-    final sig = signer.generateSignature(hashed) as ECSignature;
 
-    // 5. Encode as 64-byte r∥s
-    return _encodeSignature(sig);
+    // Generate the signature
+    final sig = signer.generateSignature(challenge) as ECSignature;
+
+    // === DEBUG: print r and s separately ===
+    // P-256 produces 32-byte values, so 64 hex digits each
+    final rHex = sig.r.toRadixString(16).padLeft(64, '0');
+    final sHex = sig.s.toRadixString(16).padLeft(64, '0');
+    print('[BLE-DBG] r (hex): $rHex');
+    print('[BLE-DBG] s (hex): $sHex');
+
+    // Now DER-encode and return
+    final der = _encodeSignatureDer(sig);
+
+    // (Optionally) re-print the DER blob too
+    final derHex = der.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    print('[BLE-DBG] DER signature (hex): $derHex');
+
+    return der;
   }
+
 
   /// Generates a new P-256 keypair, stores the private key securely
   /// and the public key coordinates (x,y) in Base64.
