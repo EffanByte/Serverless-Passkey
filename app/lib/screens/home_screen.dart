@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
+import 'package:flutter/services.dart';
+import 'package:app/services/native_ble_plugin.dart';
+import 'package:app/utils/key_utils.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -10,51 +12,45 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String? _publicKeyX;
-  String? _publicKeyY;
+  static const _channel = MethodChannel('native_ble_plugin');
+
+  /// Holds the log of BLE events to display in the UI.
+  final List<String> _logs = [];
 
   @override
   void initState() {
     super.initState();
-    _loadPublicKey();
-  }
 
-final _secureStorage = FlutterSecureStorage();
+    // 1️⃣ Wire up the MethodChannel handler
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'challengeReceived') {
+        final b64 = call.arguments as String;
+        final bytes = base64Decode(b64);
 
-  Future<void> _loadPublicKey() async {
-    final x = await _secureStorage.read(key: 'publicKeyX');
-    final y = await _secureStorage.read(key: 'publicKeyY');
-    setState(() {
-      _publicKeyX = x;
-      _publicKeyY = y;
+        // Distinguish challenge vs. reply by length or content
+        final kind = bytes.length == 16 ? 'Challenge' : 'Reply';
+
+        final entry =
+            '$kind received (${bytes.length} bytes): '
+            '${kind == "Challenge" ? b64 : utf8.decode(bytes)}';
+
+        setState(() {
+          _logs.insert(0, entry); // newest at top
+        });
+
+        if (kind == 'Challenge') {
+          // 2️⃣ Automatically sign the challenge
+          final sig = await KeyUtils.signChallenge(bytes);
+          setState(() {
+            _logs.insert(
+              0,
+              'Signed challenge (${sig.length} bytes): ${base64Encode(sig)}',
+            );
+          });
+          // TODO: send `sig` back over BLE or via another channel
+        }
+      }
     });
-  }
-
-
-  void _showPublicKeyDialog() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Public Key'),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('X:\n$_publicKeyX'),
-                  const SizedBox(height: 8),
-                  Text('Y:\n$_publicKeyY'),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
-    );
   }
 
   @override
@@ -62,35 +58,73 @@ final _secureStorage = FlutterSecureStorage();
     return Scaffold(
       appBar: AppBar(title: const Text('Passkey Device Home')),
       body: Padding(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'Welcome! Your device is ready to act as a passkey authenticator.',
-              style: TextStyle(fontSize: 18),
+            // Buttons to start/stop BLE advertising
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.bluetooth),
+                    label: const Text('Start BLE Peripheral'),
+                    onPressed: () async {
+                      await NativeBlePlugin.startAdvertising();
+                      setState(() => _logs.insert(0, 'Started advertising'));
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.stop),
+                  label: const Text('Stop'),
+                  onPressed: () async {
+                    await NativeBlePlugin.stopAdvertising();
+                    setState(() => _logs.insert(0, 'Stopped advertising'));
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 32),
-            ElevatedButton.icon(
-              onPressed: _showPublicKeyDialog,
-              icon: const Icon(Icons.key),
-              label: const Text('View Public Key'),
-            ),
+
             const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () {
-                // TODO: Navigate to BLE broadcaster screen
-              },
-              icon: const Icon(Icons.bluetooth),
-              label: const Text('Start Challenge Broadcaster'),
+            const Divider(),
+
+            // Log display area
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Event log:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () {
-                // TODO: Navigate to WebView passkey screen
-              },
-              icon: const Icon(Icons.security),
-              label: const Text('Sign Challenge via WebView'),
+            const SizedBox(height: 8),
+
+            // Expanded ListView to show _logs
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white24),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                padding: const EdgeInsets.all(8),
+                child:
+                    _logs.isEmpty
+                        ? const Center(
+                          child: Text(
+                            'No events yet',
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        )
+                        : ListView.builder(
+                          reverse: true,
+                          itemCount: _logs.length,
+                          itemBuilder:
+                              (context, i) => Text(
+                                _logs[i],
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                        ),
+              ),
             ),
           ],
         ),
