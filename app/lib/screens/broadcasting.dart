@@ -1,3 +1,5 @@
+// lib/screens/broadcasting.dart
+
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,7 +9,6 @@ import 'package:app/services/key_utils.dart';
 
 class BroadcastingScreen extends StatefulWidget {
   const BroadcastingScreen({super.key});
-
   @override
   State<BroadcastingScreen> createState() => _BroadcastingScreenState();
 }
@@ -29,23 +30,26 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
     setState(() => _logs.insert(0, '✅ Advertising started'));
   }
 
-  Future<void> _stopAdvertising() async {
-    await NativeBlePlugin.stopAdvertising();
-    setState(() => _logs.insert(0, '⏹️ Advertising stopped'));
+  @override
+  void dispose() {
+    NativeBlePlugin.stopAdvertising();
+    super.dispose();
   }
 
   Future<void> _handleIncoming(MethodCall call) async {
     if (call.method != 'challengeReceived') return;
-    final b64 = call.arguments as String;
+    final b64challenge = call.arguments as String;
 
-    // 1) Show raw Base64 immediately
-    setState(() => _logs.insert(0, '📥 Raw Base64: $b64'));
+    // 1) Log raw challenge
+    setState(() => _logs.insert(0, '📥 Challenge (Base64): $b64challenge'));
 
-    // 2) Decode bytes
-    final bytes = base64Decode(b64);
-    setState(() => _logs.insert(0, '🔍 Decoded ${bytes.length} bytes'));
+    // 2) Decode to bytes
+    final challengeBytes = base64Decode(b64challenge);
+    setState(
+      () => _logs.insert(0, '🔍 Decoded ${challengeBytes.length} bytes'),
+    );
 
-    // 3) Biometric auth
+    // 3) Biometric authentication
     bool didAuth = false;
     try {
       didAuth = await _auth.authenticate(
@@ -57,20 +61,23 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
       );
     } on PlatformException catch (e) {
       setState(() => _logs.insert(0, '⚠️ Auth error: ${e.message}'));
+      return;
     }
 
     if (!didAuth) {
       setState(() => _logs.insert(0, '❌ Authentication failed'));
       return;
     }
-    setState(() => _logs.insert(0, '🔐 Authentication succeeded'));
+    setState(() => _logs.insert(0, '✅ Authentication succeeded'));
 
-    // 4) Sign challenge
-    final sig = await KeyUtils.signChallenge(bytes);
-    final sigB64 = base64Encode(sig);
-    setState(() => _logs.insert(0, '✍️ Signature: $sigB64'));
+    // 4) Sign the challenge
+    final sigBytes = await KeyUtils.signChallenge(challengeBytes);
+    final b64sig = base64Encode(sigBytes);
+    setState(() => _logs.insert(0, '✍️ Signature (Base64): $b64sig'));
 
-    // TODO: write signature back over BLE if needed
+    // 5) Send the signature back to the browser over BLE
+    await NativeBlePlugin.sendSignature(b64sig);
+    setState(() => _logs.insert(0, '📤 Signature sent to browser'));
   }
 
   @override
@@ -81,18 +88,18 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Stop button
             Align(
               alignment: Alignment.centerRight,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.stop_circle),
                 label: const Text('Stop Broadcasting'),
-                onPressed: _stopAdvertising,
+                onPressed: () async {
+                  await NativeBlePlugin.stopAdvertising();
+                  setState(() => _logs.insert(0, '⏹️ Advertising stopped'));
+                },
               ),
             ),
-            const SizedBox(height: 8),
             const Divider(),
-            // Event log
             Expanded(
               child:
                   _logs.isEmpty
@@ -101,7 +108,7 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
                         reverse: true,
                         itemCount: _logs.length,
                         itemBuilder:
-                            (ctx, i) => Padding(
+                            (_, i) => Padding(
                               padding: const EdgeInsets.symmetric(vertical: 2),
                               child: Text(_logs[i]),
                             ),
@@ -113,4 +120,3 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
     );
   }
 }
-  
