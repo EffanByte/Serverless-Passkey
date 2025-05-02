@@ -16,12 +16,12 @@ import android.content.Context
 import android.os.ParcelUuid
 import android.util.Base64
 import android.util.Log
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.util.UUID
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {    
   // The channel name must match the one in Dart
   private val CHANNEL = "native_ble_plugin"
   private lateinit var methodChannel: MethodChannel
@@ -83,9 +83,8 @@ class MainActivity : FlutterActivity() {
       addCharacteristic(characteristic)
     }
 
-    // 6) Open the GATT server and listen for writes
     gattServer = bluetoothManager?.openGattServer(this, object : BluetoothGattServerCallback() {
-      override fun onCharacteristicWriteRequest(
+    override fun onCharacteristicWriteRequest(
         device: BluetoothDevice,
         requestId: Int,
         charac: BluetoothGattCharacteristic,
@@ -93,24 +92,27 @@ class MainActivity : FlutterActivity() {
         responseNeeded: Boolean,
         offset: Int,
         value: ByteArray
-      ) {
-        // Acknowledge the write to the central
+    ) {
+        // 1) Acknowledge the write immediately
         gattServer?.sendResponse(
-          device,
-          requestId,
-          BluetoothGatt.GATT_SUCCESS,
-          /*offset=*/0,
-          /*value=*/null
+        device,
+        requestId,
+        BluetoothGatt.GATT_SUCCESS,
+        /*offset=*/0,
+        /*value=*/null
         )
 
-        // Base64-encode the incoming bytes
+        // 2) Base64-encode the incoming bytes
         val b64 = Base64.encodeToString(value, Base64.NO_WRAP)
         Log.i("BLE", "Received (base64): $b64")
 
-        // 7) Send the challenge into Dart
+        // 3) Now switch to the main (UI) thread before invoking Dart
+        runOnUiThread {
         methodChannel.invokeMethod("challengeReceived", b64)
-      }
+        }
+    }
     })
+
 
     // 8) Add service to the server
     gattServer?.addService(service)
