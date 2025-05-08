@@ -1,21 +1,20 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pointycastle/export.dart';
 
-/// Converts a BigInt into a big-endian byte array.
 Uint8List bigIntToBytes(BigInt number) {
-  final byteMask = BigInt.from(0xff);
+  final mask = BigInt.from(0xff);
   final bytes = <int>[];
   BigInt n = number;
   while (n > BigInt.zero) {
-    bytes.insert(0, (n & byteMask).toInt());
+    bytes.insert(0, (n & mask).toInt());
     n = n >> 8;
   }
   return Uint8List.fromList(bytes.isEmpty ? [0] : bytes);
 }
 
-/// Converts a big-endian byte array into a BigInt.
 BigInt bytesToBigInt(Uint8List bytes) {
   BigInt result = BigInt.zero;
   for (final b in bytes) {
@@ -25,10 +24,9 @@ BigInt bytesToBigInt(Uint8List bytes) {
 }
 
 Uint8List _encodeSignatureDer(ECSignature sig) {
-  // Ensure positive integers per DER rules:
   Uint8List _pos(Uint8List bs) {
     if (bs.isNotEmpty && (bs[0] & 0x80) != 0) {
-      return Uint8List.fromList([0, ...bs]);
+      return Uint8List.fromList([0] + bs);
     }
     return bs;
   }
@@ -36,94 +34,43 @@ Uint8List _encodeSignatureDer(ECSignature sig) {
   final r = _pos(bigIntToBytes(sig.r));
   final s = _pos(bigIntToBytes(sig.s));
 
-  // Build INTEGER r
-  final body = BytesBuilder();
-  body.addByte(0x02);
-  body.addByte(r.length);
-  body.add(r);
-  // Build INTEGER s
-  body.addByte(0x02);
-  body.addByte(s.length);
-  body.add(s);
+  final body =
+      BytesBuilder()
+        ..addByte(0x02)
+        ..addByte(r.length)
+        ..add(r)
+        ..addByte(0x02)
+        ..addByte(s.length)
+        ..add(s);
+  final bdy = body.toBytes();
 
-  final bodyBytes = body.toBytes();
+  final seq =
+      BytesBuilder()
+        ..addByte(0x30)
+        ..addByte(bdy.length)
+        ..add(bdy);
 
-  // Wrap in SEQUENCE
-  final seq = BytesBuilder();
-  seq.addByte(0x30);
-  seq.addByte(bodyBytes.length);
-  seq.add(bodyBytes);
   return seq.toBytes();
 }
 
-/// Encodes an [ECSignature] as 64-byte r∥s.
-Uint8List _encodeSignature(ECSignature sig) {
-  final rBytes = bigIntToBytes(sig.r);
-  final sBytes = bigIntToBytes(sig.s);
-  final out = Uint8List(64);
-  final rPad = 32 - rBytes.length;
-  final sPad = 32 - sBytes.length;
-  for (var i = 0; i < rBytes.length; i++) {
-    out[rPad + i] = rBytes[i];
-  }
-  for (var i = 0; i < sBytes.length; i++) {
-    out[32 + sPad + i] = sBytes[i];
-  }
-  return out;
-}
-
 class KeyUtils {
-  static const _privateKeyKey = 'privateKeyPem';
+  static const _privateKey = 'privateKeyPem';
   static const _publicKeyX = 'publicKeyX';
   static const _publicKeyY = 'publicKeyY';
+  static const MethodChannel _bleChannel = MethodChannel('native_ble_plugin');
 
-  static final _secureStorage = FlutterSecureStorage();
+  static final _storage = FlutterSecureStorage();
 
-  /// Signs the given [challenge] with the stored P-256 EC private key,
-  /// using SHA-256 and deterministic ECDSA (RFC6979). Returns a 64-byte signature.
-  static Future<Uint8List> signChallenge(Uint8List challenge) async {
-    // 1. Read and decode the private scalar (d)
-    final privB64 = await _secureStorage.read(key: _privateKeyKey);
-    if (privB64 == null) {
-      throw StateError('No private key found.');
-    }
-    final dBytes = base64Decode(privB64);
-    final d = bytesToBigInt(dBytes);
-
-    // 2. Reconstruct the ECPrivateKey on curve P-256
-    final domain = ECDomainParameters('prime256v1');
-    final privateKey = ECPrivateKey(d, domain);
-
-    // Init the signer (it will hash internally once)
-    final signer = Signer('SHA-256/DET-ECDSA')
-      ..init(true, PrivateKeyParameter<ECPrivateKey>(privateKey));
-
-    // Generate the signature
-    final sig = signer.generateSignature(challenge) as ECSignature;
-
-    // === DEBUG: print r and s separately ===
-    // P-256 produces 32-byte values, so 64 hex digits each
-    final rHex = sig.r.toRadixString(16).padLeft(64, '0');
-    final sHex = sig.s.toRadixString(16).padLeft(64, '0');
-    print('[BLE-DBG] r (hex): $rHex');
-    print('[BLE-DBG] s (hex): $sHex');
-
-    // Now DER-encode and return
-    final der = _encodeSignatureDer(sig);
-
-    // (Optionally) re-print the DER blob too
-    final derHex = der.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    print('[BLE-DBG] DER signature (hex): $derHex');
-
-    return der;
+static Future<bool> isKeyGenerated() async {
+    return await _storage.containsKey(key: _privateKey);
   }
 
 
-  /// Generates a new P-256 keypair, stores the private key securely
-  /// and the public key coordinates (x,y) in Base64.
+  /// Generates a new P-256 keypair, stores scalar & coords in secure storage,
+  /// and notifies native BLE of the uncompressed public key.
   static Future<void> generateAndStoreKeyPair() async {
-    final keyParams = ECKeyGeneratorParameters(ECCurve_prime256v1());
-    final random =
+    final params = ECKeyGeneratorParameters(ECCurve_prime256v1());
+    final rng =
         FortunaRandom()..seed(
           KeyParameter(
             Uint8List.fromList(
@@ -131,36 +78,56 @@ class KeyUtils {
             ),
           ),
         );
-    final generator =
-        ECKeyGenerator()..init(ParametersWithRandom(keyParams, random));
-    final keyPair = generator.generateKeyPair();
-    final privKey = keyPair.privateKey as ECPrivateKey;
-    final pubKey = keyPair.publicKey as ECPublicKey;
+    final gen = ECKeyGenerator()..init(ParametersWithRandom(params, rng));
+    final pair = gen.generateKeyPair();
+    final priv = pair.privateKey as ECPrivateKey;
+    final pub = pair.publicKey as ECPublicKey;
 
-    // Encode and store
-    final privPem = base64Encode(bigIntToBytes(privKey.d!));
-    final pubX = base64Encode(bigIntToBytes(pubKey.Q!.x!.toBigInteger()!));
-    final pubY = base64Encode(bigIntToBytes(pubKey.Q!.y!.toBigInteger()!));
+    final dB64 = base64Encode(bigIntToBytes(priv.d!));
+    final xB64 = base64Encode(bigIntToBytes(pub.Q!.x!.toBigInteger()!));
+    final yB64 = base64Encode(bigIntToBytes(pub.Q!.y!.toBigInteger()!));
 
-    await _secureStorage.write(key: _privateKeyKey, value: privPem);
-    await _secureStorage.write(key: _publicKeyX, value: pubX);
-    await _secureStorage.write(key: _publicKeyY, value: pubY);
+    await _storage.write(key: _privateKey, value: dB64);
+    await _storage.write(key: _publicKeyX, value: xB64);
+    await _storage.write(key: _publicKeyY, value: yB64);
+
+    // build uncompressed point 0x04||X||Y and send to native
+    final xBytes = base64Decode(xB64);
+    final yBytes = base64Decode(yB64);
+    final uncompressed =
+        Uint8List(1 + xBytes.length + yBytes.length)
+          ..[0] = 0x04
+          ..setRange(1, 1 + xBytes.length, xBytes)
+          ..setRange(
+            1 + xBytes.length,
+            1 + xBytes.length + yBytes.length,
+            yBytes,
+          );
+
+    await _bleChannel.invokeMethod(
+      'updatePublicKey',
+      base64Encode(uncompressed),
+    );
   }
 
-  /// Returns true if a private key has already been generated.
-  static Future<bool> isKeyGenerated() async {
-    return await _secureStorage.containsKey(key: _privateKeyKey);
+  /// Signs a 16-byte [challenge] with P-256 deterministic ECDSA, returns DER.
+  static Future<Uint8List> signChallenge(Uint8List challenge) async {
+    final dB64 = await _storage.read(key: _privateKey);
+    if (dB64 == null) throw StateError('No private key.');
+    final d = bytesToBigInt(Uint8List.fromList(base64Decode(dB64)));
+    final domain = ECDomainParameters('prime256v1');
+    final priv = ECPrivateKey(d, domain);
+
+    final signer = Signer('SHA-256/DET-ECDSA');
+    signer.init(true, PrivateKeyParameter(priv));
+
+    // internally hashes challenge
+    final sig = signer.generateSignature(challenge) as ECSignature;
+
+    final der = _encodeSignatureDer(sig);
+    return der;
   }
 
-  /// Retrieve public key X coordinate (Base64).
-  static Future<String?> getPublicKeyX() async =>
-      await _secureStorage.read(key: _publicKeyX);
-
-  /// Retrieve public key Y coordinate (Base64).
-  static Future<String?> getPublicKeyY() async =>
-      await _secureStorage.read(key: _publicKeyY);
-
-  /// Retrieve private key (Base64 of scalar d).
-  static Future<String?> getPrivateKeyPem() async =>
-      await _secureStorage.read(key: _privateKeyKey);
+  static Future<String?> getPublicKeyX() => _storage.read(key: _publicKeyX);
+  static Future<String?> getPublicKeyY() => _storage.read(key: _publicKeyY);
 }
