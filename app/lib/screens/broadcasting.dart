@@ -45,6 +45,11 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
     final bytes = base64Decode(b64);
     setState(() => _logs.insert(0, '🔍 Decoded ${bytes.length} bytes'));
 
+    // ignore non-challenge writes (like the 3-byte ACK)
+    if (bytes.length != 16) {
+      return;
+    }
+
     // 3) Biometric auth
     bool didAuth = false;
     try {
@@ -121,44 +126,42 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
               child: Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
-                  child:
-                      _logs.isEmpty
-                          ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.history,
-                                  size: 48,
-                                  color: Colors.white.withOpacity(0.5),
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No events yet',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.5),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                          : ListView.builder(
-                            reverse: true,
-                            itemCount: _logs.length,
-                            itemBuilder:
-                                (ctx, i) => Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                  ),
-                                  child: Text(
-                                    _logs[i],
-                                    style: const TextStyle(
-                                      fontFamily: 'monospace',
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
+                  child: _logs.isEmpty
+                      ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.history,
+                          size: 48,
+                          color: Colors.white.withOpacity(0.5),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No events yet',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
                           ),
+                        ),
+                      ],
+                    ),
+                  )
+                      : ListView.builder(
+                    reverse: true,
+                    itemCount: _logs.length,
+                    itemBuilder: (ctx, i) => Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 4,
+                      ),
+                      child: Text(
+                        _logs[i],
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
