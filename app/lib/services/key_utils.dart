@@ -45,7 +45,7 @@ class KeyUtils {
   static const _publicKeyX = 'publicKeyX';
   static const _publicKeyY = 'publicKeyY';
 
-  static final _secureStorage = FlutterSecureStorage();
+  static const _secureStorage = FlutterSecureStorage();
 
   /// Signs the given [challenge] with the stored P-256 EC private key,
   /// using SHA-256 and deterministic ECDSA (RFC6979). Returns a 64-byte signature.
@@ -90,8 +90,8 @@ class KeyUtils {
     final generator =
         ECKeyGenerator()..init(ParametersWithRandom(keyParams, random));
     final keyPair = generator.generateKeyPair();
-    final privKey = keyPair.privateKey as ECPrivateKey;
-    final pubKey = keyPair.publicKey as ECPublicKey;
+    final privKey = keyPair.privateKey;
+    final pubKey = keyPair.publicKey;
 
     // Encode and store
     final privPem = base64Encode(bigIntToBytes(privKey.d!));

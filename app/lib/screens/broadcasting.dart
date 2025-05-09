@@ -76,36 +76,91 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('BLE Broadcasting')),
+      appBar: AppBar(
+        title: const Text('Broadcasting'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.stop_circle),
+              label: const Text('Stop'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              onPressed: _stopAdvertising,
+            ),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Stop button
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.stop_circle),
-                label: const Text('Stop Broadcasting'),
-                onPressed: _stopAdvertising,
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Icon(Icons.bluetooth_searching, color: Colors.white),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Broadcasting Active',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 8),
-            const Divider(),
-            // Event log
+            const SizedBox(height: 16),
             Expanded(
-              child:
-                  _logs.isEmpty
-                      ? const Center(child: Text('No events yet'))
-                      : ListView.builder(
-                        reverse: true,
-                        itemCount: _logs.length,
-                        itemBuilder:
-                            (ctx, i) => Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 2),
-                              child: Text(_logs[i]),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child:
+                      _logs.isEmpty
+                          ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.history,
+                                  size: 48,
+                                  color: Colors.white.withOpacity(0.5),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No events yet',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.5),
+                                  ),
+                                ),
+                              ],
                             ),
-                      ),
+                          )
+                          : ListView.builder(
+                            reverse: true,
+                            itemCount: _logs.length,
+                            itemBuilder:
+                                (ctx, i) => Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  child: Text(
+                                    _logs[i],
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                          ),
+                ),
+              ),
             ),
           ],
         ),
@@ -113,4 +168,3 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
     );
   }
 }
-  
