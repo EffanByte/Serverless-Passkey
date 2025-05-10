@@ -1,5 +1,4 @@
-// lib/services/native_ble_plugin.dart
-
+// app/lib/services/native_ble_plugin.dart
 import 'package:flutter/services.dart';
 
 class NativeBlePlugin {

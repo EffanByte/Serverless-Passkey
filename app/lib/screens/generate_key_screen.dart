@@ -1,3 +1,4 @@
+// app/lib/screens/generate_key_screen.dart
 import 'package:flutter/material.dart';
 import 'package:app/services/key_utils.dart';
 import 'package:app/screens/home_screen.dart';

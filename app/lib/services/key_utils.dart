@@ -1,114 +1,85 @@
+// app/lib/services/key_utils.dart
+
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:pointycastle/export.dart';
+import 'package:custom_post_quantum/custom_post_quantum.dart';
 
-/// Converts a BigInt into a big-endian byte array.
-Uint8List bigIntToBytes(BigInt number) {
-  final byteMask = BigInt.from(0xff);
-  final bytes = <int>[];
-  BigInt n = number;
-  while (n > BigInt.zero) {
-    bytes.insert(0, (n & byteMask).toInt());
-    n = n >> 8;
-  }
-  return Uint8List.fromList(bytes.isEmpty ? [0] : bytes);
-}
-
-/// Converts a big-endian byte array into a BigInt.
-BigInt bytesToBigInt(Uint8List bytes) {
-  BigInt result = BigInt.zero;
-  for (final b in bytes) {
-    result = (result << 8) | BigInt.from(b);
-  }
-  return result;
-}
-
-/// Encodes an [ECSignature] as 64-byte r∥s.
-Uint8List _encodeSignature(ECSignature sig) {
-  final rBytes = bigIntToBytes(sig.r);
-  final sBytes = bigIntToBytes(sig.s);
-  final out = Uint8List(64);
-  final rPad = 32 - rBytes.length;
-  final sPad = 32 - sBytes.length;
-  for (var i = 0; i < rBytes.length; i++) {
-    out[rPad + i] = rBytes[i];
-  }
-  for (var i = 0; i < sBytes.length; i++) {
-    out[32 + sPad + i] = sBytes[i];
-  }
-  return out;
+/// Helper to get 32 cryptographically-secure random bytes.
+Uint8List _randomSeed() {
+  final rnd = Random.secure();
+  return Uint8List.fromList(List<int>.generate(32, (_) => rnd.nextInt(256)));
 }
 
 class KeyUtils {
-  static const _privateKeyKey = 'privateKeyPem';
-  static const _publicKeyX     = 'publicKeyX';
-  static const _publicKeyY     = 'publicKeyY';
+  static const _kemSeedKey = 'kemSeed';   // (not used in broadcasting, but kept)
+  static const _sigSeedKey = 'sigSeed';
+  static final _storage    = FlutterSecureStorage();
 
-  static const _secureStorage = FlutterSecureStorage();
-
-  /// Signs the given [challenge] (raw 16 bytes) with the stored P-256 private key,
-  /// using deterministic ECDSA (RFC6979). Returns a 64-byte r∥s signature.
-  /// Signs the given [challenge] with the stored P-256 EC private key,
-  /// using SHA-256 and deterministic ECDSA (RFC6979). Returns a 64-byte signature.
-  static Future<Uint8List> signChallenge(Uint8List challenge) async {
-    // 1. Read and decode the private scalar (d)
-    final privB64 = await _secureStorage.read(key: _privateKeyKey);
-    if (privB64 == null) {
-      throw StateError('No private key found.');
-    }
-    final dBytes = base64Decode(privB64);
-    final d = bytesToBigInt(dBytes);
-
-    // 2. Reconstruct the ECPrivateKey on curve P-256
-    final domain = ECDomainParameters('prime256v1');
-    final privateKey = ECPrivateKey(d, domain);
-
-    // 3. Create a deterministic ECDSA signer that *internally* does SHA-256
-    final signer = Signer('SHA-256/DET-ECDSA')
-      ..init(true, PrivateKeyParameter<ECPrivateKey>(privateKey));
-
-    // 4. Pass the *raw* 16-byte challenge in — the signer will hash it once.
-    final sig = signer.generateSignature(challenge) as ECSignature;
-
-    // 5. Encode as 64-byte r||s
-    return _encodeSignature(sig);
-  }
-
-  /// Generates a P-256 keypair, stores the private scalar (d) in secure storage
-  /// and the public key coords (x,y) in Base64.
+  /// Generates two 32-byte seeds (one for Kyber, one for Dilithium) and stores them.
   static Future<void> generateAndStoreKeyPair() async {
-    final keyParams = ECKeyGeneratorParameters(ECCurve_prime256v1());
-    final random = FortunaRandom()..seed(
-      KeyParameter(
-        Uint8List.fromList(
-          List.generate(32, (_) => DateTime.now().microsecond % 256),
-        ),
-      ),
-    );
-    final generator = ECKeyGenerator()..init(ParametersWithRandom(keyParams, random));
-    final pair      = generator.generateKeyPair();
-    final privKey   = pair.privateKey as ECPrivateKey;
-    final pubKey    = pair.publicKey as ECPublicKey;
+    final kemSeed = _randomSeed();
+    final sigSeed = _randomSeed();
 
-    final privPem = base64Encode(bigIntToBytes(privKey.d!));
-    final pubX    = base64Encode(bigIntToBytes(pubKey.Q!.x!.toBigInteger()!));
-    final pubY    = base64Encode(bigIntToBytes(pubKey.Q!.y!.toBigInteger()!));
+    await _storage.write(key: _kemSeedKey, value: base64Encode(kemSeed));
+    await _storage.write(key: _sigSeedKey, value: base64Encode(sigSeed));
 
-    await _secureStorage.write(key: _privateKeyKey, value: privPem);
-    await _secureStorage.write(key: _publicKeyX,    value: pubX);
-    await _secureStorage.write(key: _publicKeyY,    value: pubY);
+    print('🔑 Seeds generated & stored');
   }
 
-  static Future<bool> isKeyGenerated() async =>
-      _secureStorage.containsKey(key: _privateKeyKey);
+  /// Returns true if you’ve already generated & stored those seeds.
+  static Future<bool> isKeyGenerated() =>
+      _storage.containsKey(key: _kemSeedKey);
 
-  static Future<String?> getPublicKeyX() async =>
-      _secureStorage.read(key: _publicKeyX);
+  /// **Returns the Dilithium-2 public key** (Base64) derived from its seed.
+  /// This is what the Flutter side will broadcast under `"sigPub"`.
+  static Future<String> getPublicKey() async {
+    final sigSeedB64 = await _storage.read(key: _sigSeedKey);
+    if (sigSeedB64 == null) {
+      throw StateError(
+          'No Dilithium seed found. Call generateAndStoreKeyPair() first.'
+      );
+    }
+    final sigSeed = base64Decode(sigSeedB64);
 
-  static Future<String?> getPublicKeyY() async =>
-      _secureStorage.read(key: _publicKeyY);
+    final dil = Dilithium.level2();
+    final (pkObj, _) = dil.generateKeys(sigSeed);
 
-  static Future<String?> getPrivateKeyPem() async =>
-      _secureStorage.read(key: _privateKeyKey);
+    final rawPub = pkObj.serialize();
+    final b64Pub = base64Encode(rawPub);
+
+    print('🔑 Generated Dilithium public key: '
+        '${rawPub.length} bytes → Base64 length ${b64Pub.length}');
+    // Optionally print a short prefix for sanity:
+    print('   pub key (base64) prefix: ${b64Pub.substring(0, 16)}…');
+
+    return b64Pub;
+  }
+
+  /// Signs a 16-byte challenge using Dilithium-2 derived from its seed.
+  /// Returns the raw signature bytes (to be chunked and sent over BLE).
+  static Future<Uint8List> signChallenge(Uint8List challenge) async {
+    print('📥 Received challenge to sign: ${challenge.length} bytes');
+    final sigSeedB64 = await _storage.read(key: _sigSeedKey);
+    if (sigSeedB64 == null) {
+      throw StateError(
+          'No Dilithium seed found. Call generateAndStoreKeyPair() first.'
+      );
+    }
+    final sigSeed = base64Decode(sigSeedB64);
+
+    final dil = Dilithium.level2();
+    final (_, skObj) = dil.generateKeys(sigSeed);
+
+    final sig = dil.sign(skObj, challenge);
+    print('✍️ Generated signature: ${sig.length} bytes');
+
+    // Optionally, show a short hex snippet:
+    final snippet = sig.take(8).map((b) => b.toRadixString(16).padLeft(2,'0')).join();
+    print('   signature prefix (hex): $snippet…');
+
+    return sig;
+  }
 }

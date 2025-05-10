@@ -1,5 +1,8 @@
+// app/lib/screens/broadcasting.dart
+
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -54,19 +57,20 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
     switch (call.method) {
       case 'subscribed':
       // The client has subscribed to notifications (wrote CCC descriptor)
-        _addLog('✅ Client subscribed – now sending public key');
+        _addLog('✅ Client subscribed – now sending Dilithium public key');
         print('🟢 onMethodCall: subscribed');
 
-        final String? x = await KeyUtils.getPublicKeyX();
-        final String? y = await KeyUtils.getPublicKeyY();
-        print('📤 Dart has pubX=$x pubY=$y');
-        if (x != null && y != null) {
-          final jsonStr = jsonEncode({'x': x, 'y': y});
-          print('📤 JSON public key: $jsonStr');
-          await NativeBlePlugin.sendPublicKey(jsonStr);
-          _addLog('🔑 Public key sent');
-          print('🟢 sendPublicKey done');
-        }
+        // Send Dilithium-2 public key as {"sigPub":"<base64>"}
+        final String sigPub = await KeyUtils.getPublicKey();
+        final String jsonStr = jsonEncode({'sigPub': sigPub});
+
+        // extra logs:
+        print('📤 JSON public key payload length: ${jsonStr.length} chars');
+        print('   pub JSON prefix: ${jsonStr.substring(0, min(32, jsonStr.length))}…');
+
+        await NativeBlePlugin.sendPublicKey(jsonStr);
+        _addLog('🔑 Dilithium public key sent');
+        print('🟢 sendPublicKey done');
         break;
 
       case 'challengeReceived':
@@ -78,6 +82,12 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
         try {
           challengeBytes = base64Decode(b64Challenge);
           _addLog('🔍 Decoded challenge: ${challengeBytes.length} bytes');
+          // log first few bytes in hex
+          final hexSnippet = challengeBytes
+              .take(8)
+              .map((b) => b.toRadixString(16).padLeft(2, '0'))
+              .join();
+          print('   challenge bytes (hex prefix): $hexSnippet…');
         } catch (e) {
           _addLog('❌ Failed to decode challenge: $e');
           return;
@@ -109,11 +119,20 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
         _addLog('🔐 Authentication succeeded');
         print('🔵 Authentication succeeded');
 
+        // Sign and chunk
         try {
-          final signature = await KeyUtils.signChallenge(challengeBytes);
+          final Uint8List signature = await KeyUtils.signChallenge(challengeBytes);
           final String b64Sig = base64Encode(signature);
-          _addLog('✍️ Signature (base64): $b64Sig');
-          print('✍️ Signature created: $b64Sig');
+
+          // extra logs:
+          _addLog('✍️ Signature created: ${signature.length} bytes');
+          print('✍️ Signature raw length: ${signature.length} bytes');
+          final sigHexSnippet = signature
+              .take(8)
+              .map((b) => b.toRadixString(16).padLeft(2, '0'))
+              .join();
+          print('   signature bytes (hex prefix): $sigHexSnippet…');
+          print('   signature (base64) length: ${b64Sig.length} chars');
 
           await NativeBlePlugin.sendSignature(b64Sig);
           _addLog('➡️ Signature sent');

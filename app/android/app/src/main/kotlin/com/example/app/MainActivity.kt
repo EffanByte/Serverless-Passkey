@@ -1,3 +1,4 @@
+// app/android/app/src/main/kotlin/com/example/app/MainActivity.kt
 package com.example.app
 
 import android.Manifest
@@ -17,13 +18,13 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.UUID
+import kotlin.math.min
 
 class MainActivity : FlutterFragmentActivity() {
   companion object {
-    private const val CHANNEL = "native_ble_plugin"
+    private const val CHANNEL   = "native_ble_plugin"
     private const val REQ_PERMS = 100
   }
 
@@ -35,7 +36,10 @@ class MainActivity : FlutterFragmentActivity() {
   private var pkcsChar: BluetoothGattCharacteristic? = null
   private var lastDevice: BluetoothDevice? = null
 
-  // Service and characteristic UUID
+  // negotiated MTU size (default 23)
+  private var currentMtu: Int = 23
+
+  // BLE service & characteristic UUIDs
   private val SERVICE_UUID        = UUID.fromString("0000feed-0000-1000-8000-00805f9b34fb")
   private val CHARACTERISTIC_UUID = UUID.fromString("0000beef-0000-1000-8000-00805f9b34fb")
 
@@ -58,8 +62,16 @@ class MainActivity : FlutterFragmentActivity() {
           val sigBytes = Base64.decode(b64Sig, Base64.NO_WRAP)
           lastDevice?.let { device ->
             pkcsChar?.let { charac ->
-              gattServer?.notifyCharacteristicChanged(device, charac, false, sigBytes)
-              Log.i("BLE", "Signature notified (${sigBytes.size} bytes)")
+              // split into MTU‐safe chunks, cap at 512 bytes (Android limit)
+              val perChunk = min(currentMtu - 3, 512)
+              var offset = 0
+              while (offset < sigBytes.size) {
+                val end = (offset + perChunk).coerceAtMost(sigBytes.size)
+                val chunk = sigBytes.copyOfRange(offset, end)
+                gattServer?.notifyCharacteristicChanged(device, charac, false, chunk)
+                offset = end
+              }
+              Log.i("BLE", "Signature sent (${sigBytes.size} bytes) in chunks of $perChunk")
             }
           }
           result.success(null)
@@ -69,8 +81,16 @@ class MainActivity : FlutterFragmentActivity() {
           val jsonBytes = json.toByteArray(Charsets.UTF_8)
           lastDevice?.let { device ->
             pkcsChar?.let { charac ->
-              gattServer?.notifyCharacteristicChanged(device, charac, false, jsonBytes)
-              Log.i("BLE", "Public key JSON notified (${jsonBytes.size} bytes)")
+              // chunk the JSON to fit within MTU-3 bytes per notification
+              val perChunk = min(currentMtu - 3, 512)
+              var offset = 0
+              while (offset < jsonBytes.size) {
+                val end = (offset + perChunk).coerceAtMost(jsonBytes.size)
+                val chunk = jsonBytes.copyOfRange(offset, end)
+                gattServer?.notifyCharacteristicChanged(device, charac, false, chunk)
+                offset = end
+              }
+              Log.i("BLE", "Public key JSON sent (${jsonBytes.size} bytes) in chunks of $perChunk")
             }
           }
           result.success(null)
@@ -117,7 +137,7 @@ class MainActivity : FlutterFragmentActivity() {
     } else {
       Toast.makeText(
         this,
-        "BLE permissions are required to advertise. Please enable them in Settings.",
+        "BLE permissions are required. Please enable them in Settings.",
         Toast.LENGTH_LONG
       ).show()
     }
@@ -130,18 +150,18 @@ class MainActivity : FlutterFragmentActivity() {
       advertiser       = bluetoothAdapter?.bluetoothLeAdvertiser
 
       if (advertiser == null) {
-        Log.e("BLE", "This device does not support BLE advertising")
+        Log.e("BLE", "BLE advertising not supported")
         return
       }
 
-      // Single characteristic supports WRITE & NOTIFY
+      // WRITE & NOTIFY characteristic
       pkcsChar = BluetoothGattCharacteristic(
         CHARACTERISTIC_UUID,
         BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
         BluetoothGattCharacteristic.PERMISSION_WRITE or BluetoothGattCharacteristic.PERMISSION_READ
       )
 
-      // Add the CCC descriptor so clients can subscribe
+      // CCC descriptor for client subscription
       val cccd = BluetoothGattDescriptor(
         UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"),
         BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
@@ -167,6 +187,12 @@ class MainActivity : FlutterFragmentActivity() {
           }
         }
 
+        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+          super.onMtuChanged(device, mtu)
+          currentMtu = mtu
+          Log.i("BLE", "MTU changed: $mtu")
+        }
+
         override fun onCharacteristicWriteRequest(
           device: BluetoothDevice,
           requestId: Int,
@@ -176,7 +202,6 @@ class MainActivity : FlutterFragmentActivity() {
           offset: Int,
           value: ByteArray
         ) {
-          // Acknowledge write
           gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
           lastDevice = device
           val b64Challenge = Base64.encodeToString(value, Base64.NO_WRAP)
@@ -196,12 +221,9 @@ class MainActivity : FlutterFragmentActivity() {
           value: ByteArray
         ) {
           if (descriptor.uuid == UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")) {
-            // save the CCC value so notifyCharacteristicChanged actually works
             descriptor.value = value
             gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             Log.i("BLE", "CCCD written: ${value.contentToString()}")
-
-            // **Right here**, tell Flutter the client is subscribed:
             runOnUiThread {
               methodChannel.invokeMethod("subscribed", null)
             }
@@ -209,11 +231,7 @@ class MainActivity : FlutterFragmentActivity() {
             gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, 0, null)
           }
         }
-
-      }
-      )
-
-
+      })
 
       gattServer?.addService(service)
 
@@ -240,7 +258,7 @@ class MainActivity : FlutterFragmentActivity() {
       Log.e("BLE", "Missing BLE permission", e)
       requestBlePermissions()
     } catch (e: Exception) {
-      Log.e("BLE", "startBleServer error", e)
+      Log.e("BLE", "Error starting BLE server", e)
     }
   }
 
@@ -248,9 +266,9 @@ class MainActivity : FlutterFragmentActivity() {
     try {
       advertiser?.stopAdvertising(object : AdvertiseCallback() {})
       gattServer?.close()
-      Log.i("BLE", "Advertising stopped")
+      Log.i("BLE", "BLE server stopped")
     } catch (e: Exception) {
-      Log.e("BLE", "stopBleServer error", e)
+      Log.e("BLE", "Error stopping BLE server", e)
     }
   }
 

@@ -113,6 +113,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.8"
+  custom_post_quantum:
+    dependency: "direct main"
+    description:
+      path: "packages/custom_post_quantum"
+      relative: true
+    source: path
+    version: "1.0.2-prerelease.8"
   dbus:
     dependency: transitive
     description:
@@ -272,6 +279,22 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  hashlib:
+    dependency: transitive
+    description:
+      name: hashlib
+      sha256: f00cbea036b8a8ea19be5df1e233fb2e250858639d3488776c32f0bd60b41cc4
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.21.2"
+  hashlib_codecs:
+    dependency: transitive
+    description:
+      name: hashlib_codecs
+      sha256: "8cea9ccafcfeaa7324d2ae52c61c69f7ff71f4237507a018caab31b9e416e3b1"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.6.0"
   http:
     dependency: "direct main"
     description:
