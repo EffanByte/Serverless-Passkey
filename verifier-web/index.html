@@ -1,13 +1,65 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Post-Quantum Authenticator</title>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- 🧠 Setup WASM Module -->
+<script>
+  window.Module = window.Module || {};
+  window.Module.onRuntimeInitialized = function () {
+    console.log('✅ WASM onRuntimeInitialized triggered (from index.html)');
+  };
+  window.Module.print    = console.log;
+  window.Module.printErr = console.error;
+</script>
+
+<!-- 🧩 Load WASM wrapper -->
+<script src="/ml_dsa.js"></script>
+
+<!-- 🔧 Debug helper: paste your real Base64 values below -->
+<script>
+  async function runWasmVerify(b64pub, b64sig, b64chal) {
+    // 1) Decode Base64 → Uint8Arrays
+    const pubKey = Uint8Array.from(atob(b64pub),  c => c.charCodeAt(0));
+    const sig    = Uint8Array.from(atob(b64sig),  c => c.charCodeAt(0));
+    const chal   = Uint8Array.from(atob(b64chal), c => c.charCodeAt(0));
+
+    // 2) Allocate on the WASM heap
+    const pPub = Module._malloc(pubKey.length);
+    Module.HEAPU8.set(pubKey, pPub);
+
+    const pMsg = Module._malloc(chal.length);
+    Module.HEAPU8.set(chal, pMsg);
+
+    const pSig = Module._malloc(sig.length);
+    Module.HEAPU8.set(sig, pSig);
+
+    // 3) Call verify()
+    const res = Module._verify(pPub, pMsg, pSig);
+    console.log('🛠️ runWasmVerify →', res === 0 ? '✅ valid (0)' : `❌ invalid (${res})`);
+
+    // 4) Clean up
+    Module._free(pPub);
+    Module._free(pMsg);
+    Module._free(pSig);
+  }
+
+  // ★ EDIT THESE with the exact values from your Flutter logs:
+  //
+  // runWasmVerify(
+  //   "BASE64_PUBKEY_FROM_FLUTTER",
+  //   "BASE64_SIGNATURE_FROM_FLUTTER",
+  //   "BASE64_CHALLENGE_YOU_SENT"
+  // );
+</script>
+
+<!-- 🚀 Load React app entry -->
+<script type="module" src="src/main.jsx"></script>
+</body>
 </html>

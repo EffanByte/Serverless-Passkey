@@ -34,7 +34,7 @@ class KeyUtils {
       _storage.containsKey(key: _kemSeedKey);
 
   /// **Returns the Dilithium-2 public key** (Base64) derived from its seed.
-  /// This is what the Flutter side will broadcast under `"sigPub"`.
+  /// This is what the Flutter side will broadcast under "sigPub".
   static Future<String> getPublicKey() async {
     final sigSeedB64 = await _storage.read(key: _sigSeedKey);
     if (sigSeedB64 == null) {
@@ -83,3 +83,4 @@ class KeyUtils {
     return sig;
   }
 }
+

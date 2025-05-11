@@ -27,4 +27,9 @@ class NativeBlePlugin {
   static Future<void> sendPublicKey(String json) async {
     await _channel.invokeMethod('sendPublicKey', json);
   }
+  /// ✅ Add this method to match the 'sendRawBytes' method in MainActivity.kt
+  static Future<void> sendRawBytes(Uint8List chunk) async {
+    await _channel.invokeMethod('sendRawBytes', chunk);
+  }
+
 }

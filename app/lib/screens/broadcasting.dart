@@ -1,5 +1,3 @@
-// app/lib/screens/broadcasting.dart
-
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:math';
@@ -18,7 +16,6 @@ class BroadcastingScreen extends StatefulWidget {
 }
 
 class _BroadcastingScreenState extends State<BroadcastingScreen> {
-  /// The MethodChannel used by MainActivity
   final MethodChannel _channel = NativeBlePlugin.channel;
   final LocalAuthentication _localAuth = LocalAuthentication();
   final List<String> _logs = [];
@@ -26,7 +23,6 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
   @override
   void initState() {
     super.initState();
-    // Handle incoming method calls (subscription & challenges)
     _channel.setMethodCallHandler(_onMethodCall);
     _startAdvertising();
   }
@@ -56,15 +52,13 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
   Future<void> _onMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'subscribed':
-      // The client has subscribed to notifications (wrote CCC descriptor)
         _addLog('✅ Client subscribed – now sending Dilithium public key');
         print('🟢 onMethodCall: subscribed');
 
-        // Send Dilithium-2 public key as {"sigPub":"<base64>"}
         final String sigPub = await KeyUtils.getPublicKey();
         final String jsonStr = jsonEncode({'sigPub': sigPub});
-
-        // extra logs:
+        final Uint8List rawPubKey = base64Decode(sigPub);
+        print('📏 Raw public key length: ${rawPubKey.length} bytes');
         print('📤 JSON public key payload length: ${jsonStr.length} chars');
         print('   pub JSON prefix: ${jsonStr.substring(0, min(32, jsonStr.length))}…');
 
@@ -81,12 +75,9 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
         Uint8List challengeBytes;
         try {
           challengeBytes = base64Decode(b64Challenge);
+          print('🧪 Challenge bytes (base64 again): ${base64Encode(challengeBytes)}');
           _addLog('🔍 Decoded challenge: ${challengeBytes.length} bytes');
-          // log first few bytes in hex
-          final hexSnippet = challengeBytes
-              .take(8)
-              .map((b) => b.toRadixString(16).padLeft(2, '0'))
-              .join();
+          final hexSnippet = challengeBytes.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
           print('   challenge bytes (hex prefix): $hexSnippet…');
         } catch (e) {
           _addLog('❌ Failed to decode challenge: $e');
@@ -119,24 +110,24 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
         _addLog('🔐 Authentication succeeded');
         print('🔵 Authentication succeeded');
 
-        // Sign and chunk
         try {
           final Uint8List signature = await KeyUtils.signChallenge(challengeBytes);
-          final String b64Sig = base64Encode(signature);
-
-          // extra logs:
           _addLog('✍️ Signature created: ${signature.length} bytes');
           print('✍️ Signature raw length: ${signature.length} bytes');
-          final sigHexSnippet = signature
-              .take(8)
-              .map((b) => b.toRadixString(16).padLeft(2, '0'))
-              .join();
+          final sigHexSnippet = signature.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
           print('   signature bytes (hex prefix): $sigHexSnippet…');
-          print('   signature (base64) length: ${b64Sig.length} chars');
 
-          await NativeBlePlugin.sendSignature(b64Sig);
-          _addLog('➡️ Signature sent');
-          print('🟢 sendSignature() completed');
+          // ✅ Chunked Raw Signature Transmission
+          const chunkSize = 512;
+          for (int i = 0; i < signature.length; i += chunkSize) {
+            final end = (i + chunkSize < signature.length) ? i + chunkSize : signature.length;
+            final chunk = signature.sublist(i, end);
+            print('📤 Sending chunk ${i ~/ chunkSize + 1}: ${chunk.length} bytes');
+            await NativeBlePlugin.sendRawBytes(chunk); // This must be implemented natively
+          }
+
+          _addLog('➡️ Signature sent (raw chunks)');
+          print('🟢 Signature chunks fully sent');
         } catch (e) {
           _addLog('❌ Signing failed: $e');
           print('🔴 signChallenge error: $e');
@@ -196,10 +187,7 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
                       children: [
                         Icon(Icons.history, size: 48, color: Colors.grey[600]),
                         const SizedBox(height: 8),
-                        Text(
-                          'No events yet',
-                          style: TextStyle(color: Colors.grey[600]),
-                        ),
+                        Text('No events yet', style: TextStyle(color: Colors.grey[600])),
                       ],
                     ),
                   )
