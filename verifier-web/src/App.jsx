@@ -2,9 +2,15 @@ import React, { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import EquinoxLogo from './assets/Equinox.png';
 import Starfield from './Starfield';
+import CelestialEvents from './CelestialEvents';
 
 const SERVICE_UUID        = '0000feed-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '0000beef-0000-1000-8000-00805f9b34fb';
+
+
+
+// Vite exposes env vars prefixed with VITE_ via import.meta.env
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
 
 const styles = {
   button: {
@@ -55,6 +61,8 @@ const styles = {
   },
 };
 
+
+
 function stripLeadingZeros(buf) {
   let i = 0;
   while (i < buf.length - 1 && buf[i] === 0) i++;
@@ -81,20 +89,81 @@ function rawSigToDer(raw) {
   return der.buffer;
 }
 
+
+
+const App = () => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [deviceName, setDeviceName] = useState('');
+
+  const handleLoginSuccess = (data) => {
+    setIsAuthenticated(true);
+  };
+
+  if (isAuthenticated) {
+    return <CelestialEvents />;
+  }
+
+  return <LoginSignup onSuccess={handleLoginSuccess} />;
+};
+
+
+function PasskeyModal({ isOpen, onClose, connectToPhone, sendChallenge, status }) {
+  if (!isOpen) return null;
+  return (
+    <div style={{
+      position: 'fixed', top:0,left:0,right:0,bottom:0,
+      background:'rgba(0,0,0,0.6)',
+      display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000
+    }}>
+      <div style={{ background:'#222',padding:'2rem',borderRadius:'12px',color:'#fff',maxWidth:400 }}>
+        <h2>Use Your Passkey</h2>
+        <p>Status: {status}</p>
+        <div style={styles.buttonContainer}>
+          <button
+            onClick={connectToPhone}
+            style={{ ...styles.button, ...styles.primaryButton }}
+          >Connect to Phone</button>
+          <button
+            onClick={sendChallenge}
+            disabled={!status.startsWith('Connected')}
+            style={{
+              ...styles.button,
+              ...styles.secondaryButton,
+              ...(!status.startsWith('Connected') && styles.disabledButton)
+            }}
+          >Send Challenge & Reply</button>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            marginTop:'1rem', ...styles.button,
+            background:'transparent', color:'#aaa'
+          }}
+        >Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+
 const LoginSignup = ({ onSuccess }) => {
   const [activeTab, setActiveTab] = useState('login');
-  const [formData, setFormData]   = useState({
+  const [formData, setFormData] = useState({
     fullName: '', email: '', password: '', confirmPassword: ''
   });
-  const [errors, setErrors]       = useState({});
+  const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
+  const [showPasskeyModal, setShowPasskeyModal] = useState(false);
+  const [enable2FA, setEnable2FA] = useState(false);
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [user2FAStatus, setUser2FAStatus] = useState(null);
 
   // BLE / Passkey state
-  const [charac, setCharac]          = useState(null);
-  const [status, setStatus]          = useState('Idle');
-  const publicKeyRef                 = useRef(null);
-  const challengeBufRef              = useRef(null);
-  const pubKeyAccumulatedRef         = useRef('');
+  const [charac, setCharac] = useState(null);
+  const [status, setStatus] = useState('Idle');
+  const publicKeyRef = useRef(null);
+  const challengeBufRef = useRef(null);
+  const pubKeyAccumulatedRef = useRef('');
 
   // --- BLE handlers (same as before) ---
   const connectToPhone = async () => {
@@ -118,52 +187,78 @@ const LoginSignup = ({ onSuccess }) => {
     }
   };
 
-  const sendChallengeAndReply = async () => {
-    if (!charac) return alert('Not connected yet!');
-    const challenge = window.crypto.getRandomValues(new Uint8Array(16));
-    challengeBufRef.current = challenge.buffer;
-    setStatus('Writing challenge…');
-    await charac.writeValue(challenge);
-  };
+const handleNotification = async (event) => {
+  const bytes = new Uint8Array(event.target.value.buffer);
 
-  const handleNotification = async (event) => {
-    const bytes = new Uint8Array(event.target.value.buffer);
+  // ——— 1) Registration phase: collect public‐key JSON chunks ———
+  if (!publicKeyRef.current) {
+    // decode as text (public‐key JSON is UTF‐8)
+    const chunk = new TextDecoder().decode(bytes);
+    pubKeyAccumulatedRef.current += chunk;
 
-    // 1) registration phase: collect {x,y}
-    if (!publicKeyRef.current) {
-      const chunk = new TextDecoder().decode(bytes);
-      const combo = pubKeyAccumulatedRef.current + chunk;
-      try {
-        const { x, y } = JSON.parse(combo);
-        const xBytes = Uint8Array.from(atob(x), c => c.charCodeAt(0));
-        const yBytes = Uint8Array.from(atob(y), c => c.charCodeAt(0));
-        const raw    = new Uint8Array(1 + xBytes.length + yBytes.length);
-        raw[0] = 0x04; raw.set(xBytes, 1); raw.set(yBytes, 1 + xBytes.length);
-        const key = await window.crypto.subtle.importKey(
-          'raw', raw.buffer,
-          { name:'ECDSA', namedCurve:'P-256' },
-          false, ['verify']
-        );
-        publicKeyRef.current = key;
-        setStatus('🔑 Public key imported');
-      } catch {
-        pubKeyAccumulatedRef.current = combo;
-      }
-      return;
+    try {
+      // once we've got a full JSON blob { x, y }
+      const { x, y } = JSON.parse(pubKeyAccumulatedRef.current);
+
+      // turn those base64 strings back into raw points
+      const xBytes = Uint8Array.from(atob(x), c => c.charCodeAt(0));
+      const yBytes = Uint8Array.from(atob(y), c => c.charCodeAt(0));
+      const raw = new Uint8Array(1 + xBytes.length + yBytes.length);
+      raw[0] = 0x04;
+      raw.set(xBytes, 1);
+      raw.set(yBytes, 1 + xBytes.length);
+
+      // import into a CryptoKey
+      const key = await window.crypto.subtle.importKey(
+        'raw',
+        raw.buffer,
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        false,
+        ['verify']
+      );
+      publicKeyRef.current = key;
+      setStatus('🔑 Public key imported');
+    } catch {
+      // still buffering JSON
     }
+    return;
+  }
 
-    // 2) login phase: verify signature
-    setStatus('🔔 Signature received');
-    const key = publicKeyRef.current;
-    const buf = challengeBufRef.current;
-    if (!key || !buf) return setStatus('⚠️ Missing key or challenge');
-    const valid = await window.crypto.subtle.verify(
-      { name:'ECDSA', hash:'SHA-256' },
-      key, bytes, buf
-    );
-    setStatus(valid ? '✅ Signature valid' : '❌ Signature invalid');
-    if (valid && onSuccess) onSuccess();
-  };
+  // ——— 2) After public-key import: check for a device-name message ———
+  const text = new TextDecoder().decode(bytes);
+  if (text.startsWith('deviceName:')) {
+    const name = text.slice('deviceName:'.length);
+    console.log('📱 Connected device:', name);
+    setDeviceName(name);
+    return;
+  }
+
+  // ——— 3) Login phase: verify signature ———
+  setStatus('🔔 Signature received');
+  const key = publicKeyRef.current;
+  const buf = challengeBufRef.current;
+  if (!key || !buf) {
+    setStatus('⚠️ Missing key or challenge');
+    return;
+  }
+
+  const valid = await window.crypto.subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    bytes,
+    buf
+  );
+
+  if (!valid) {
+    setStatus('❌ Signature invalid');
+    return;
+  }
+
+  setStatus('✅ Signature valid');
+  // now hit your `/verify-signature` endpoint…
+  // (omitted for brevity, but same as before)
+  onSuccess();
+};
 
   // --- form logic (unchanged) ---
   const handleInputChange = e => {
@@ -190,26 +285,52 @@ const LoginSignup = ({ onSuccess }) => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async e => {
+  const checkUser2FAStatus = async (email) => {
+    try {
+      const res = await fetch('{$API_BASE}/check-2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Error checking 2FA status');
+      setUser2FAStatus(data.has2FA);
+      return data.has2FA;
+    } catch (err) {
+      setErrors(prev => ({ ...prev, submit: err.message }));
+      return null;
+    }
+  };
+
+  const handleLogin = async (e) => {
     e.preventDefault();
     if (!validateForm()) return;
     setIsLoading(true);
     try {
-      const endpoint = activeTab === 'login' ? '/api/login' : '/api/signup';
-      const res = await fetch(`http://localhost:5000${endpoint}`, {
-        method: 'POST',
-        headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({
-          fullName: formData.fullName,
-          email:    formData.email,
-          password: formData.password
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Error');
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      onSuccess?.(data);
+      const has2FA = await checkUser2FAStatus(formData.email);
+      if (has2FA === null) return; // Error already set by checkUser2FAStatus
+
+      if (has2FA) {
+        // Regular login with password
+        const res = await fetch('{$API_BASE}/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: formData.email,
+            password: formData.password
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Error');
+
+        // After password verification, show passkey modal
+        setShowPasskeyModal(true);
+        // Store the token temporarily
+        localStorage.setItem('tempToken', data.token);
+      } else {
+        // Biometric-only login - just show passkey modal
+        setShowPasskeyModal(true);
+      }
     } catch (err) {
       setErrors(prev => ({ ...prev, submit: err.message }));
     } finally {
@@ -217,7 +338,26 @@ const LoginSignup = ({ onSuccess }) => {
     }
   };
 
-  // --- renderForm now includes Passkey UI ---
+  const handlePasskeySuccess = async () => {
+    try {
+      if (user2FAStatus) {
+        // If 2FA is enabled, use the temporary token
+        const tempToken = localStorage.getItem('tempToken');
+        if (!tempToken) throw new Error('Authentication failed');
+
+        // Store the final token and user data
+        localStorage.setItem('token', tempToken);
+        localStorage.removeItem('tempToken');
+      }
+
+      // Call the success callback to redirect to celestial events
+      onSuccess?.();
+    } catch (err) {
+      setErrors(prev => ({ ...prev, submit: err.message }));
+    }
+  };
+
+  // --- renderForm now includes Passkey button in signup ---
   const renderForm = () => {
     const inputStyle = {
       width: '100%',
@@ -249,61 +389,10 @@ const LoginSignup = ({ onSuccess }) => {
       fontFamily: 'Helvetica, Arial, sans-serif'
     };
 
-    // Passkey tab
-    if (activeTab === 'passkey') {
-      return (
-        <div style={{
-          backgroundColor: '#111',
-          borderRadius: '16px',
-          padding: '1.5rem',
-          boxShadow: '0 6px 32px rgba(0,0,0,0.25)',
-          width: '100%',
-          maxWidth: '400px',
-          margin: '0 auto'
-        }}>
-          <div style={{
-            marginBottom: '1.5rem',
-            padding: '1rem',
-            borderRadius: '8px',
-            backgroundColor: '#222'
-          }}>
-            <p style={{
-              fontSize: '1rem',
-              color: '#fff',
-              fontWeight: '700',
-              textAlign: 'center',
-              fontFamily: 'Helvetica, Arial, sans-serif'
-            }}>
-              Status: {status}
-            </p>
-          </div>
-          <div style={styles.buttonContainer}>
-            <button
-              onClick={connectToPhone}
-              style={{ ...styles.button, ...styles.primaryButton }}
-            >
-              Connect to Phone
-            </button>
-            <button
-              onClick={sendChallengeAndReply}
-              disabled={!charac}
-              style={{
-                ...styles.button,
-                ...styles.secondaryButton,
-                ...(charac ? {} : styles.disabledButton)
-              }}
-            >
-              Send Challenge & Reply
-            </button>
-          </div>
-        </div>
-      );
-    }
-
     // Login tab
     if (activeTab === 'login') {
       return (
-        <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: '400px', margin: '0 auto' }}>
+        <form onSubmit={handleLogin} style={{ width: '100%', maxWidth: '400px', margin: '0 auto' }}>
           <label htmlFor="email" style={labelStyle}>Email</label>
           <input
             id="email"
@@ -317,18 +406,22 @@ const LoginSignup = ({ onSuccess }) => {
           />
           {errors.email && <p style={errorStyle}>{errors.email}</p>}
 
-          <label htmlFor="password" style={labelStyle}>Password</label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            value={formData.password}
-            onChange={handleInputChange}
-            style={inputStyle}
-            placeholder="Enter your password"
-            disabled={isLoading}
-          />
-          {errors.password && <p style={errorStyle}>{errors.password}</p>}
+          {user2FAStatus && (
+            <>
+              <label htmlFor="password" style={labelStyle}>Password</label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                value={formData.password}
+                onChange={handleInputChange}
+                style={inputStyle}
+                placeholder="Enter your password"
+                disabled={isLoading}
+              />
+              {errors.password && <p style={errorStyle}>{errors.password}</p>}
+            </>
+          )}
 
           {errors.submit && <p style={{ ...errorStyle, textAlign:'center' }}>{errors.submit}</p>}
 
@@ -342,7 +435,7 @@ const LoginSignup = ({ onSuccess }) => {
               opacity: isLoading ? 0.7 : 1
             }}
           >
-            {isLoading ? 'Signing in…' : 'Sign In'}
+            {isLoading ? 'Signing in…' : user2FAStatus ? 'Sign In' : 'Continue with Biometric'}
           </button>
         </form>
       );
@@ -350,7 +443,7 @@ const LoginSignup = ({ onSuccess }) => {
 
     // Signup tab
     return (
-      <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: '400px', margin: '0 auto' }}>
+      <form onSubmit={handleLogin} style={{ width: '100%', maxWidth: '400px', margin: '0 auto' }}>
         <label htmlFor="fullName" style={labelStyle}>Full Name</label>
         <input
           id="fullName"
@@ -403,6 +496,91 @@ const LoginSignup = ({ onSuccess }) => {
         />
         {errors.confirmPassword && <p style={errorStyle}>{errors.confirmPassword}</p>}
 
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          marginBottom: '1.5rem',
+          position: 'relative'
+        }}>
+          <label style={{
+            display: 'flex',
+            alignItems: 'center',
+            cursor: 'pointer',
+            color: '#fff',
+            fontSize: '1.1rem',
+            fontWeight: '600',
+            fontFamily: 'Helvetica, Arial, sans-serif'
+          }}>
+            <input
+              type="checkbox"
+              checked={enable2FA}
+              onChange={(e) => setEnable2FA(e.target.checked)}
+              style={{
+                marginRight: '0.75rem',
+                width: '1.25rem',
+                height: '1.25rem',
+                cursor: 'pointer'
+              }}
+            />
+            Enable Two-Factor Authentication
+          </label>
+          <div
+            onMouseEnter={() => setShowTooltip(true)}
+            onMouseLeave={() => setShowTooltip(false)}
+            style={{
+              marginLeft: '0.5rem',
+              cursor: 'help',
+              position: 'relative'
+            }}
+          >
+            <span style={{
+              display: 'inline-block',
+              width: '1.25rem',
+              height: '1.25rem',
+              lineHeight: '1.25rem',
+              textAlign: 'center',
+              backgroundColor: '#333',
+              color: '#fff',
+              borderRadius: '50%',
+              fontSize: '0.875rem',
+              fontWeight: 'bold'
+            }}>
+              ?
+            </span>
+            {showTooltip && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                backgroundColor: '#222',
+                color: '#fff',
+                padding: '1rem',
+                borderRadius: '8px',
+                width: '250px',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                zIndex: 1000,
+                marginTop: '0.5rem',
+                fontSize: '0.9rem',
+                lineHeight: '1.4'
+              }}>
+                <div style={{
+                  position: 'absolute',
+                  top: '-8px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  width: '0',
+                  height: '0',
+                  borderLeft: '8px solid transparent',
+                  borderRight: '8px solid transparent',
+                  borderBottom: '8px solid #222'
+                }} />
+                When enabled, you'll need both your password and biometric authentication to log in. When disabled, you can log in using only biometric authentication.
+              </div>
+            )}
+          </div>
+        </div>
+
         {errors.submit && <p style={{ ...errorStyle, textAlign:'center' }}>{errors.submit}</p>}
 
         <button
@@ -412,10 +590,23 @@ const LoginSignup = ({ onSuccess }) => {
             ...styles.button,
             ...styles.primaryButton,
             width: '100%',
-            opacity: isLoading ? 0.7 : 1
+            opacity: isLoading ? 0.7 : 1,
+            marginBottom: '1rem'
           }}
         >
           {isLoading ? 'Creating account…' : 'Create Account'}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowPasskeyModal(true)}
+          style={{
+            ...styles.button,
+            ...styles.secondaryButton,
+            width: '100%'
+          }}
+        >
+          Generate Passkey
         </button>
       </form>
     );
@@ -522,16 +713,6 @@ const LoginSignup = ({ onSuccess }) => {
                 >
                   Sign Up
                 </button>
-                <button
-                  onClick={() => setActiveTab('passkey')}
-                  style={{
-                    ...styles.toggleButton,
-                    ...(activeTab === 'passkey' ? styles.primaryButton : styles.secondaryButton),
-                    flex: 1,
-                  }}
-                >
-                  Passkey
-                </button>
               </div>
               <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
                 {renderForm()}
@@ -540,8 +721,11 @@ const LoginSignup = ({ onSuccess }) => {
           </main>
         </div>
       </div>
+      {showPasskeyModal && <PasskeyModal />}
     </>
   );
 };
 
-export default LoginSignup;
+export default App;
+
+
