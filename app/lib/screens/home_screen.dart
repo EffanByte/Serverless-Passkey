@@ -3,6 +3,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:app/screens/broadcasting.dart';
 import 'package:app/screens/generate_key_screen.dart';
 import 'package:app/services/key_utils.dart';
+import 'package:app/screens/website_log_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -110,6 +111,53 @@ class HomeScreen extends StatelessWidget {
                             context,
                             MaterialPageRoute(
                               builder: (_) => const BroadcastingScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Card(
+              ),
+              const SizedBox(height: 24),
+              Card(
+                color: Colors.teal[800],
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.web, size: 48, color: Colors.white),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Website Logs',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'View login attempts and BLE authentication logs.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white.withOpacity(0.7)),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.launch),
+                        label: const Text('Open Logs'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.teal[800],
+                        ),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const WebsiteLogScreen(),
                             ),
                           );
                         },
