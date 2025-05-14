@@ -1,86 +1,106 @@
 // app/lib/services/key_utils.dart
 
 import 'dart:convert';
-import 'dart:math';
 import 'dart:typed_data';
-
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:custom_post_quantum/custom_post_quantum.dart';
-
-/// Helper to get 32 cryptographically-secure random bytes.
-Uint8List _randomSeed() {
-  final rnd = Random.secure();
-  return Uint8List.fromList(List<int>.generate(32, (_) => rnd.nextInt(256)));
-}
+import 'package:app/services/native_ble_plugin.dart';
 
 class KeyUtils {
-  static const _kemSeedKey = 'kemSeed';   // (not used in broadcasting, but kept)
-  static const _sigSeedKey = 'sigSeed';
-  static final _storage    = FlutterSecureStorage();
+  static const _publicKeyStorageKey = 'ml_dsa_public_key';
+  static const _secretKeyStorageKey = 'ml_dsa_secret_key';
+  static final FlutterSecureStorage _storage = FlutterSecureStorage();
 
-  /// Generates two 32-byte seeds (one for Kyber, one for Dilithium) and stores them.
+  /// Generates a fresh ML-DSA-44 keypair via the native JNI bridge,
+  /// and stores both public and secret keys (Base64) securely.
   static Future<void> generateAndStoreKeyPair() async {
-    final kemSeed = _randomSeed();
-    final sigSeed = _randomSeed();
+    final keys = await NativeBlePlugin.generateKeypair();
+    final pub = keys['publicKey']!;
+    final sec = keys['secretKey']!;
 
-    await _storage.write(key: _kemSeedKey, value: base64Encode(kemSeed));
-    await _storage.write(key: _sigSeedKey, value: base64Encode(sigSeed));
+    await _storage.write(
+      key: _publicKeyStorageKey,
+      value: base64Encode(pub),
+    );
+    await _storage.write(
+      key: _secretKeyStorageKey,
+      value: base64Encode(sec),
+    );
 
-    print('🔑 Seeds generated & stored');
+    print('🔑 ML-DSA-44 keypair generated & stored');
   }
 
-  /// Returns true if you’ve already generated & stored those seeds.
-  static Future<bool> isKeyGenerated() =>
-      _storage.containsKey(key: _kemSeedKey);
+  /// Returns true if a keypair has already been generated and saved.
+  static Future<bool> isKeyGenerated() async {
+    final hasPub = await _storage.containsKey(key: _publicKeyStorageKey);
+    final hasSec = await _storage.containsKey(key: _secretKeyStorageKey);
+    return hasPub && hasSec;
+  }
 
-  /// **Returns the Dilithium-2 public key** (Base64) derived from its seed.
-  /// This is what the Flutter side will broadcast under "sigPub".
+  /// Retrieves the stored ML-DSA-44 public key (Base64).
   static Future<String> getPublicKey() async {
-    final sigSeedB64 = await _storage.read(key: _sigSeedKey);
-    if (sigSeedB64 == null) {
+    final b64Pub = await _storage.read(key: _publicKeyStorageKey);
+    print('🔑 Flutter public key (Base64): $b64Pub');
+    if (b64Pub == null) {
       throw StateError(
-          'No Dilithium seed found. Call generateAndStoreKeyPair() first.'
-      );
+          'No ML-DSA-44 keypair found. Call generateAndStoreKeyPair() first.');
     }
-    final sigSeed = base64Decode(sigSeedB64);
+    final pub = base64Decode(b64Pub);
+    print('🔑 Retrieved ML-DSA-44 public key: ${pub.length} bytes');
 
-    final dil = Dilithium.level2();
-    final (pkObj, _) = dil.generateKeys(sigSeed);
+    print('🔑 Flutter public key hex:\n' +
+        pub.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' '));
 
-    final rawPub = pkObj.serialize();
-    final b64Pub = base64Encode(rawPub);
-
-    print('🔑 Generated Dilithium public key: '
-        '${rawPub.length} bytes → Base64 length ${b64Pub.length}');
-    // Optionally print a short prefix for sanity:
-    print('   pub key (base64) prefix: ${b64Pub.substring(0, 16)}…');
+    // Print fingerprint in hex
+    final fingerprint = pub.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+    print('🔑 Flutter public key fingerprint: $fingerprint');
 
     return b64Pub;
   }
 
-  /// Signs a 16-byte challenge using Dilithium-2 derived from its seed.
-  /// Returns the raw signature bytes (to be chunked and sent over BLE).
+  /// Signs a 16-byte challenge using the stored ML-DSA-44 secret key.
   static Future<Uint8List> signChallenge(Uint8List challenge) async {
-    print('📥 Received challenge to sign: ${challenge.length} bytes');
-    final sigSeedB64 = await _storage.read(key: _sigSeedKey);
-    if (sigSeedB64 == null) {
+    final b64Sec = await _storage.read(key: _secretKeyStorageKey);
+    if (b64Sec == null) {
       throw StateError(
-          'No Dilithium seed found. Call generateAndStoreKeyPair() first.'
-      );
+          'No ML-DSA-44 keypair found. Call generateAndStoreKeyPair() first.');
     }
-    final sigSeed = base64Decode(sigSeedB64);
+    final sec = base64Decode(b64Sec);
 
-    final dil = Dilithium.level2();
-    final (_, skObj) = dil.generateKeys(sigSeed);
+    // Log challenge details
+    print('📥 Challenge to sign: ${challenge.toList()}');
+    print('📏 Challenge length: ${challenge.length}');
+    print('🧠 Secret key length: ${sec.length}');
 
-    final sig = dil.sign(skObj, challenge);
-    print('✍️ Generated signature: ${sig.length} bytes');
-
-    // Optionally, show a short hex snippet:
-    final snippet = sig.take(8).map((b) => b.toRadixString(16).padLeft(2,'0')).join();
-    print('   signature prefix (hex): $snippet…');
+    // Sign challenge via native JNI bridge
+    final sig = await NativeBlePlugin.sign(
+      message: challenge,
+      secretKey: sec,
+    );
+    print('✍️ Generated ML-DSA-44 signature: ${sig.length} bytes');
 
     return sig;
   }
-}
 
+  /// Verifies a signature with the stored public key.
+  static Future<bool> verifySignature({
+    required Uint8List signature,
+    required Uint8List message,
+  }) async {
+    final b64Pub = await _storage.read(key: _publicKeyStorageKey);
+    if (b64Pub == null) {
+      throw StateError(
+          'No ML-DSA-44 keypair found. Call generateAndStoreKeyPair() first.');
+    }
+    final pub = base64Decode(b64Pub);
+
+    final fingerprint = pub.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+    print('🔑 Public key fingerprint (verify): $fingerprint');
+
+    final rc = await NativeBlePlugin.verify(
+      signature: signature,
+      message: message,
+      publicKey: pub,
+    );
+    return rc == 0;
+  }
+}

@@ -1,7 +1,7 @@
+// app/lib/screens/broadcasting_screen.dart
+
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
@@ -31,10 +31,8 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
     try {
       await NativeBlePlugin.startAdvertising();
       _addLog('✅ Advertising started');
-      print('🔵 BLE advertising started');
     } catch (e) {
       _addLog('❌ Failed to start advertising: $e');
-      print('🔴 startAdvertising error: $e');
     }
   }
 
@@ -42,107 +40,130 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
     try {
       await NativeBlePlugin.stopAdvertising();
       _addLog('⏹️ Advertising stopped');
-      print('🛑 BLE advertising stopped');
     } catch (e) {
       _addLog('❌ Failed to stop advertising: $e');
-      print('🔴 stopAdvertising error: $e');
     }
   }
 
   Future<void> _onMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'subscribed':
-        _addLog('✅ Client subscribed – now sending Dilithium public key');
-        print('🟢 onMethodCall: subscribed');
-
-        final String sigPub = await KeyUtils.getPublicKey();
-        final String jsonStr = jsonEncode({'sigPub': sigPub});
-        final Uint8List rawPubKey = base64Decode(sigPub);
-        print('📏 Raw public key length: ${rawPubKey.length} bytes');
-        print('📤 JSON public key payload length: ${jsonStr.length} chars');
-        print('   pub JSON prefix: ${jsonStr.substring(0, min(32, jsonStr.length))}…');
-
-        await NativeBlePlugin.sendPublicKey(jsonStr);
-        _addLog('🔑 Dilithium public key sent');
-        print('🟢 sendPublicKey done');
+        _addLog('✅ Client subscribed – sending public key');
+        try {
+          // Web side expects the key under "sigPub"
+          final sigPub = await KeyUtils.getPublicKey();
+          final pubBytes = base64Decode(sigPub);
+          final fingerprint = pubBytes.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+          print('🔑 Flutter public key fingerprint: $fingerprint');
+          final jsonStr = jsonEncode({'sigPub': sigPub});
+          await NativeBlePlugin.sendPublicKey(jsonStr);
+          _addLog('🔑 Public key sent');
+        } catch (e) {
+          _addLog('❌ Failed to send public key: $e');
+        }
         break;
 
       case 'challengeReceived':
         final String b64Challenge = call.arguments as String;
-        _addLog('📥 Challenge (base64): $b64Challenge');
-        print('📥 challengeReceived: $b64Challenge');
+        _addLog('📥 Challenge received (base64): $b64Challenge');
 
-        Uint8List challengeBytes;
+        late Uint8List challengeBytes;
         try {
           challengeBytes = base64Decode(b64Challenge);
-          print('🧪 Challenge bytes (base64 again): ${base64Encode(challengeBytes)}');
           _addLog('🔍 Decoded challenge: ${challengeBytes.length} bytes');
-          final hexSnippet = challengeBytes.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-          print('   challenge bytes (hex prefix): $hexSnippet…');
         } catch (e) {
-          _addLog('❌ Failed to decode challenge: $e');
+          _addLog('❌ Invalid challenge data: $e');
           return;
         }
-
         if (challengeBytes.length != 16) {
-          _addLog('⚠️ Ignoring non-challenge write (${challengeBytes.length} bytes)');
+          _addLog('⚠️ Unexpected challenge size: ${challengeBytes.length}');
           return;
         }
 
-        bool didAuth = false;
+        bool authenticated = false;
         try {
-          didAuth = await _localAuth.authenticate(
-            localizedReason: 'Authenticate to sign the challenge',
+          authenticated = await _localAuth.authenticate(
+            localizedReason: 'Authenticate to sign challenge',
             options: const AuthenticationOptions(
               biometricOnly: true,
               stickyAuth: false,
             ),
           );
-        } on PlatformException catch (e) {
-          _addLog('⚠️ Biometric auth error: ${e.message}');
-          print('⚠️ Biometric error: ${e.message}');
+        } catch (e) {
+          _addLog('⚠️ Auth error: $e');
         }
-        if (!didAuth) {
+        if (!authenticated) {
           _addLog('❌ Authentication failed');
-          print('🔴 Authentication failed');
           return;
         }
         _addLog('🔐 Authentication succeeded');
-        print('🔵 Authentication succeeded');
 
         try {
-          final Uint8List signature = await KeyUtils.signChallenge(challengeBytes);
-          _addLog('✍️ Signature created: ${signature.length} bytes');
-          print('✍️ Signature raw length: ${signature.length} bytes');
-          final sigHexSnippet = signature.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-          print('   signature bytes (hex prefix): $sigHexSnippet…');
-
-          // ✅ Chunked Raw Signature Transmission
+          final sig = await KeyUtils.signChallenge(challengeBytes);
           const chunkSize = 512;
-          for (int i = 0; i < signature.length; i += chunkSize) {
-            final end = (i + chunkSize < signature.length) ? i + chunkSize : signature.length;
-            final chunk = signature.sublist(i, end);
-            print('📤 Sending chunk ${i ~/ chunkSize + 1}: ${chunk.length} bytes');
-            await NativeBlePlugin.sendRawBytes(chunk); // This must be implemented natively
+          for (var offset = 0; offset < sig.length; offset += chunkSize) {
+            final end = (offset + chunkSize).clamp(0, sig.length);
+            final chunk = sig.sublist(offset, end);
+            await NativeBlePlugin.sendRawBytes(chunk);
           }
-
-          _addLog('➡️ Signature sent (raw chunks)');
-          print('🟢 Signature chunks fully sent');
+          _addLog('➡️ Signature sent (${sig.length} bytes)');
         } catch (e) {
           _addLog('❌ Signing failed: $e');
-          print('🔴 signChallenge error: $e');
         }
         break;
 
+      case 'challengeReceivedRaw':
+        final Uint8List challengeBytes = call.arguments as Uint8List;
+        _addLog('📥 Challenge received (raw): ${challengeBytes.length} bytes');
+
+        if (challengeBytes.length != 16) {
+          _addLog('⚠️ Unexpected challenge size: ${challengeBytes.length}');
+          return;
+        }
+
+        bool authenticated = false;
+        try {
+          authenticated = await _localAuth.authenticate(
+            localizedReason: 'Authenticate to sign challenge',
+            options: const AuthenticationOptions(
+              biometricOnly: true,
+              stickyAuth: false,
+            ),
+          );
+        } catch (e) {
+          _addLog('⚠️ Auth error: $e');
+        }
+
+        if (!authenticated) {
+          _addLog('❌ Authentication failed');
+          return;
+        }
+        _addLog('🔐 Authentication succeeded');
+
+        try {
+          final sig = await KeyUtils.signChallenge(challengeBytes);
+          const chunkSize = 512;
+          for (var offset = 0; offset < sig.length; offset += chunkSize) {
+            final end = (offset + chunkSize).clamp(0, sig.length);
+            final chunk = sig.sublist(offset, end);
+            await NativeBlePlugin.sendRawBytes(chunk);
+          }
+          _addLog('➡️ Signature sent (${sig.length} bytes)');
+        } catch (e) {
+          _addLog('❌ Signing failed: $e');
+        }
+        break;
+
+
       default:
-        print('⚠️ Unknown MethodCall: ${call.method}');
+        _addLog('⚠️ Unknown method: ${call.method}');
         break;
     }
   }
 
-  void _addLog(String log) {
+  void _addLog(String entry) {
     setState(() {
-      _logs.insert(0, log);
+      _logs.insert(0, entry);
     });
   }
 
@@ -160,7 +181,6 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.stop_circle),
-            tooltip: 'Stop Advertising',
             onPressed: _stopAdvertising,
           ),
         ],
@@ -192,12 +212,11 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
                     ),
                   )
                       : ListView.builder(
-                    reverse: true,
                     itemCount: _logs.length,
-                    itemBuilder: (context, index) => Padding(
+                    itemBuilder: (context, i) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2),
                       child: Text(
-                        _logs[index],
+                        _logs[i],
                         style: const TextStyle(fontFamily: 'monospace'),
                       ),
                     ),
@@ -211,3 +230,4 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
     );
   }
 }
+

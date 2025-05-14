@@ -38,8 +38,17 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    externalNativeBuild {
+        cmake {
+            // must be a String path, relative to this module (android/app/)
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.27.7"
+        }
+    }
 }
 
 flutter {
     source = "../.."
 }
+

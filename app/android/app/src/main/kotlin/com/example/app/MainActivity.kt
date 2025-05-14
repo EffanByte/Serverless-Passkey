@@ -1,3 +1,5 @@
+// app/android/app/src/main/kotlin/com/example/app/MainActivity.kt
+
 package com.example.app
 
 import android.Manifest
@@ -22,9 +24,40 @@ import java.util.UUID
 import kotlin.math.min
 
 class MainActivity : FlutterFragmentActivity() {
+
   companion object {
     private const val CHANNEL   = "native_ble_plugin"
     private const val REQ_PERMS = 100
+
+    init {
+      // Must match add_library name in CMakeLists.txt
+      System.loadLibrary("ml_dsa")
+    }
+
+    // JNI bindings
+
+    /** 1) Generate a fresh ML-DSA-44 keypair (ignores seed) */
+    @JvmStatic external fun mlDsa44GenerateKeypair(
+      pkOut: ByteArray,
+      skOut: ByteArray
+    )
+
+    /** 2) Sign a message */
+    @JvmStatic external fun mlDsa44Sign(
+      msg: ByteArray,
+      mLen: Int,
+      sk: ByteArray,
+      sigOut: ByteArray
+    ): Int
+
+    /** 3) Verify a signature */
+    @JvmStatic external fun mlDsa44Verify(
+      sig: ByteArray,
+      sigLen: Int,
+      msg: ByteArray,
+      mLen: Int,
+      pk: ByteArray
+    ): Int
   }
 
   private lateinit var methodChannel: MethodChannel
@@ -45,6 +78,8 @@ class MainActivity : FlutterFragmentActivity() {
 
     methodChannel.setMethodCallHandler { call, result ->
       when (call.method) {
+
+        // ─── BLE Advertising ───────────────────────────────────────
         "startAdvertising" -> {
           requestBlePermissions()
           result.success(null)
@@ -99,6 +134,42 @@ class MainActivity : FlutterFragmentActivity() {
           }
           result.success(null)
         }
+
+        // ─── Post-Quantum DSA (ML-DSA-44) ──────────────────────────
+
+        "generateKeypair" -> {
+          // PQClean ml-dsa-44: PUBLICKEYBYTES=1312, SECRETKEYBYTES=2528
+          val pkArr = ByteArray(1312)
+          val skArr = ByteArray(2528)
+          mlDsa44GenerateKeypair(pkArr, skArr)
+          result.success(mapOf(
+            "publicKey" to pkArr,
+            "secretKey" to skArr
+          ))
+        }
+
+        "sign" -> {
+          val args = call.arguments as Map<*, *>
+          val msg = args["message"] as ByteArray
+          val sk  = args["secretKey"] as ByteArray
+          val sigArr = ByteArray(2420)  // PQCLEAN_MLDSA44_CLEAN_CRYPTO_BYTES
+          val sigLen = mlDsa44Sign(msg, msg.size, sk, sigArr)
+          if (sigLen < 0) {
+            result.error("SIGN_FAILED", "mlDsa44Sign returned $sigLen", null)
+          } else {
+            result.success(sigArr.copyOf(sigLen))
+          }
+        }
+
+        "verify" -> {
+          val args    = call.arguments as Map<*, *>
+          val sig     = args["signature"] as ByteArray
+          val message = args["message"]   as ByteArray
+          val pk      = args["publicKey"] as ByteArray
+          val rc = mlDsa44Verify(sig, sig.size, message, message.size, pk)
+          result.success(rc)
+        }
+
         else -> result.notImplemented()
       }
     }
@@ -206,12 +277,12 @@ class MainActivity : FlutterFragmentActivity() {
         ) {
           gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
           lastDevice = device
-          val b64Challenge = Base64.encodeToString(value, Base64.NO_WRAP)
-          Log.i("BLE", "Challenge received: $b64Challenge")
+          Log.i("BLE", "Challenge received (raw): ${value.size} bytes")
           runOnUiThread {
-            methodChannel.invokeMethod("challengeReceived", b64Challenge)
+            methodChannel.invokeMethod("challengeReceivedRaw", value)
           }
         }
+
 
         override fun onDescriptorWriteRequest(
           device: BluetoothDevice,
@@ -251,7 +322,6 @@ class MainActivity : FlutterFragmentActivity() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
           Log.i("BLE", "Advertising started (service=$SERVICE_UUID)")
         }
-
         override fun onStartFailure(errorCode: Int) {
           Log.e("BLE", "Advertising failed: $errorCode")
         }
