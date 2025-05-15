@@ -1,5 +1,8 @@
 // lib/services/native_ble_plugin.dart
-
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:pointycastle/export.dart';
+import 'key_utils.dart'; // Make sure this file has the KeyUtils class
 import 'package:flutter/services.dart';
 
 class NativeBlePlugin {
@@ -28,4 +31,17 @@ class NativeBlePlugin {
   static Future<void> sendPublicKey(String json) async {
     await _channel.invokeMethod('sendPublicKey', json);
   }
+  /// Signs and sends the encrypted device name
+  static Future<void> sendDeviceName(String name) async {
+    final nameBytes = utf8.encode(name);
+    final digest = Digest("SHA-256").process(Uint8List.fromList(nameBytes));
+    final signature = await KeyUtils.signChallenge(digest);
+    final payload = jsonEncode({
+      "name": name,
+      "signature": base64Encode(signature),
+    });
+    await _channel.invokeMethod("sendDeviceName", payload);
+  }
+
+
 }

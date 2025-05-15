@@ -20,6 +20,9 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.UUID
+import org.json.JSONObject
+import java.nio.ByteBuffer
+
 
 class MainActivity : FlutterFragmentActivity() {
   companion object {
@@ -73,8 +76,38 @@ class MainActivity : FlutterFragmentActivity() {
               Log.i("BLE", "Public key JSON notified (${jsonBytes.size} bytes)")
             }
           }
+
+          // NEW: Immediately tell Flutter to send device name
+          val deviceName = bluetoothAdapter?.name ?: Build.MODEL ?: "Unknown"
+          runOnUiThread {
+            methodChannel.invokeMethod("sendDeviceNameRequest", deviceName)
+          }
+
           result.success(null)
         }
+
+
+        "sendDeviceName" -> {
+          val jsonStr = call.arguments as String
+          val jsonObj = JSONObject(jsonStr)
+          val nameBytes = jsonObj.getString("name").toByteArray(Charsets.UTF_8)
+          val sigBytes = Base64.decode(jsonObj.getString("signature"), Base64.NO_WRAP)
+
+          val full = ByteBuffer.allocate(nameBytes.size + sigBytes.size)
+            .put(nameBytes)
+            .put(sigBytes)
+            .array()
+
+          lastDevice?.let { device ->
+            pkcsChar?.let { charac ->
+              gattServer?.notifyCharacteristicChanged(device, charac, false, full)
+              Log.i("BLE", "Device name + signature sent (${full.size} bytes)")
+            }
+          }
+          result.success(null)
+        }
+
+
         else -> result.notImplemented()
       }
     }
@@ -258,4 +291,14 @@ class MainActivity : FlutterFragmentActivity() {
     stopBleServer()
     super.onDestroy()
   }
+
+  override fun onPause() {
+    super.onPause()
+    Log.i("BLE", "Activity paused — stopping BLE server")
+    stopBleServer()
+    runOnUiThread {
+      methodChannel.invokeMethod("disconnected", null)
+    }
+  }
+
 }

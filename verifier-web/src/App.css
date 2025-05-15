@@ -3,6 +3,10 @@
   margin: 0 auto;
   padding: 2rem;
   text-align: center;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .logo {
@@ -39,4 +43,188 @@
 
 .read-the-docs {
   color: #888;
+}
+
+.outer {
+  min-height: 100vh;
+  width: 100%;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.container {
+  width: 100%;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: Helvetica, Arial, sans-serif;
+  color: #fff;
+  padding: 2rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1rem;
+  width: 100%;
+}
+
+.logo {
+  height: 320px;
+  object-fit: contain;
+}
+
+.mainContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100%;
+  padding: 0 1rem;
+}
+
+.title {
+  font-size: 2.8rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  line-height: 1.2;
+  color: #fff;
+}
+
+.subtitle {
+  font-size: 1.2rem;
+  font-weight: 400;
+  max-width: 800px;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+  color: #fff;
+}
+
+.features {
+  font-size: 1.1rem;
+  margin-bottom: 1.5rem;
+  color: #fff;
+}
+
+.card {
+  background-color: #111;
+  border-radius: 16px;
+  padding: 1.5rem;
+  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.25);
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.statusContainer {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border-radius: 8px;
+  background-color: #222;
+  width: 100%;
+}
+
+.status {
+  font-size: 1rem;
+  color: #fff;
+  font-weight: 700;
+}
+
+.buttonContainer {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+}
+
+.button {
+  padding: 1rem 2.5rem;
+  border-radius: 10px;
+  border: none;
+  font-size: 1.15rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.primaryButton {
+  background-color: #fff;
+  color: #000;
+  border: 2px solid #fff;
+}
+
+.secondaryButton {
+  background-color: transparent;
+  color: #fff;
+  border: 2px solid #fff;
+}
+
+.buttonDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input {
+  width: 100%;
+  padding: 1rem;
+  border-radius: 10px;
+  border: 2px solid #333;
+  background-color: #222;
+  color: #fff;
+  font-size: 1rem;
+  transition: border-color 0.3s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #fff;
+}
+
+.input::placeholder {
+  color: #666;
+}
+
+.navigation {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1rem;
+  background-color: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+}
+
+.nav-button {
+  padding: 0.5rem 1.5rem;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-color: transparent;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.nav-button:hover {
+  border-color: #fff;
+}
+
+.nav-button.active {
+  background-color: #fff;
+  color: #000;
 }

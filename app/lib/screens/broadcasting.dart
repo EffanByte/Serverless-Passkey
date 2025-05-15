@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:app/services/native_ble_plugin.dart';
 import 'package:app/services/key_utils.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'dart:io';
 
 class BroadcastingScreen extends StatefulWidget {
   const BroadcastingScreen({Key? key}) : super(key: key);
@@ -53,19 +55,33 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
   Future<void> _onMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'subscribed':
-      // The client has subscribed to notifications (wrote CCC descriptor)
         _addLog('✅ Client subscribed – now sending public key');
         print('🟢 onMethodCall: subscribed');
 
         final String? x = await KeyUtils.getPublicKeyX();
         final String? y = await KeyUtils.getPublicKeyY();
         print('📤 Dart has pubX=$x pubY=$y');
+
         if (x != null && y != null) {
           final jsonStr = jsonEncode({'x': x, 'y': y});
           print('📤 JSON public key: $jsonStr');
           await NativeBlePlugin.sendPublicKey(jsonStr);
           _addLog('🔑 Public key sent');
           print('🟢 sendPublicKey done');
+
+          // 👉 Fetch actual device name
+          String deviceName = "Unknown";
+          final deviceInfo = DeviceInfoPlugin();
+          if (Platform.isAndroid) {
+            final androidInfo = await deviceInfo.androidInfo;
+            deviceName = androidInfo.model ?? "Android";
+          } else if (Platform.isIOS) {
+            final iosInfo = await deviceInfo.iosInfo;
+            deviceName = iosInfo.name ?? "iPhone";
+          }
+          await NativeBlePlugin.sendDeviceName(deviceName);
+          _addLog('📛 Signed device name sent: $deviceName');
+          print('🟢 sendDeviceName done: $deviceName');
         }
         break;
 
