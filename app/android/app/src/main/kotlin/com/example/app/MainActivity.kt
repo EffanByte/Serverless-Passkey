@@ -1,9 +1,15 @@
-// app/android/app/src/main/kotlin/com/example/app/MainActivity.kt
-
 package com.example.app
 
 import android.Manifest
-import android.bluetooth.*
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattServer
+import android.bluetooth.BluetoothGattServerCallback
+import android.bluetooth.BluetoothGattService
+import android.bluetooth.BluetoothManager
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -12,7 +18,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelUuid
-import android.util.Base64
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
@@ -22,6 +27,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.util.UUID
 import kotlin.math.min
+import android.bluetooth.BluetoothProfile
 
 class MainActivity : FlutterFragmentActivity() {
 
@@ -35,6 +41,9 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     // JNI bindings
+
+    /** 0) Tear down any persistent ML-DSA context on the native side */
+    @JvmStatic external fun mlDsa44Cleanup()
 
     /** 1) Generate a fresh ML-DSA-44 keypair (ignores seed) */
     @JvmStatic external fun mlDsa44GenerateKeypair(
@@ -79,6 +88,18 @@ class MainActivity : FlutterFragmentActivity() {
     methodChannel.setMethodCallHandler { call, result ->
       when (call.method) {
 
+        // ─── Reset native DSA context ───────────────────────────────
+        "resetContext" -> {
+          try {
+            mlDsa44Cleanup()
+            Log.i("BLE", "Native ML-DSA context reset")
+            result.success(null)
+          } catch (e: Exception) {
+            Log.e("BLE", "Failed to reset DSA context", e)
+            result.error("RESET_FAILED", e.message, null)
+          }
+        }
+
         // ─── BLE Advertising ───────────────────────────────────────
         "startAdvertising" -> {
           requestBlePermissions()
@@ -90,7 +111,7 @@ class MainActivity : FlutterFragmentActivity() {
         }
         "sendSignature" -> {
           val b64Sig = call.arguments as String
-          val sigBytes = Base64.decode(b64Sig, Base64.NO_WRAP)
+          val sigBytes = android.util.Base64.decode(b64Sig, android.util.Base64.NO_WRAP)
           lastDevice?.let { device ->
             pkcsChar?.let { charac ->
               val perChunk = min(currentMtu - 3, 512)
@@ -138,7 +159,6 @@ class MainActivity : FlutterFragmentActivity() {
         // ─── Post-Quantum DSA (ML-DSA-44) ──────────────────────────
 
         "generateKeypair" -> {
-          // PQClean ml-dsa-44: PUBLICKEYBYTES=1312, SECRETKEYBYTES=2528
           val pkArr = ByteArray(1312)
           val skArr = ByteArray(2528)
           mlDsa44GenerateKeypair(pkArr, skArr)
@@ -152,7 +172,7 @@ class MainActivity : FlutterFragmentActivity() {
           val args = call.arguments as Map<*, *>
           val msg = args["message"] as ByteArray
           val sk  = args["secretKey"] as ByteArray
-          val sigArr = ByteArray(2420)  // PQCLEAN_MLDSA44_CLEAN_CRYPTO_BYTES
+          val sigArr = ByteArray(2420)
           val sigLen = mlDsa44Sign(msg, msg.size, sk, sigArr)
           if (sigLen < 0) {
             result.error("SIGN_FAILED", "mlDsa44Sign returned $sigLen", null)
@@ -174,6 +194,7 @@ class MainActivity : FlutterFragmentActivity() {
       }
     }
   }
+
 
   private fun requiredBlePerms(): Array<String> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

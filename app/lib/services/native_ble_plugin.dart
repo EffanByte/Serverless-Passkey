@@ -7,6 +7,11 @@ class NativeBlePlugin {
   // Must match the channel name in MainActivity.kt
   static const MethodChannel _channel = MethodChannel('native_ble_plugin');
 
+
+//static Future<void> resetContext() async {
+ //   await _channel.invokeMethod('resetContext');
+ // }
+
   /// Exposes the channel so you can set handlers if needed
   static MethodChannel get channel => _channel;
 

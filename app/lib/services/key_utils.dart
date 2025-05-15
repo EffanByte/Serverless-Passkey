@@ -84,7 +84,8 @@ static Future<Uint8List> signChallenge(Uint8List challenge) async {
     throw StateError('No ML-DSA-44 keypair found.');
   }
   final sec = base64Decode(b64Sec);
-  print('🔑 [DART] secretKey length: ${sec.length} bytes');
+  print('🔑 [DART] secretKey' + sec.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' '),
+    );
     // Sign challenge via native JNI bridge
     final sig = await NativeBlePlugin.sign(message: challenge, secretKey: sec);
     print('✍️ Generated ML-DSA-44 signature: ${sig.length} bytes');

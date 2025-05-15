@@ -1,29 +1,34 @@
-// app/src/main/cpp/ml_dsa_flutter_wrapper.c
-
 #include <jni.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include "ml-dsa-44/clean/api.h"
 
+// 0) Cleanup stub (no persistent state in PQClean)
+JNIEXPORT void JNICALL
+Java_com_example_app_MainActivity_mlDsa44Cleanup(JNIEnv *env, jclass clazz) {
+    // No-op: PQClean ML-DSA-44 is stateless
+}
+
+
 // 1) generateKeypair
 JNIEXPORT void JNICALL
 Java_com_example_app_MainActivity_mlDsa44GenerateKeypair(
         JNIEnv *env,
-jclass clazz,
+        jclass clazz,
         jbyteArray pkArr,
-jbyteArray skArr
+        jbyteArray skArr
 ) {
-jbyte *pk = (*env)->GetByteArrayElements(env, pkArr, NULL);
-jbyte *sk = (*env)->GetByteArrayElements(env, skArr, NULL);
+    jbyte *pk = (*env)->GetByteArrayElements(env, pkArr, NULL);
+    jbyte *sk = (*env)->GetByteArrayElements(env, skArr, NULL);
 
-// <-- Corrected function name here:
-PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair(
-(uint8_t*)pk,
-(uint8_t*)sk
-);
+    // <-- Corrected function name here:
+    PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair(
+        (uint8_t*)pk,
+        (uint8_t*)sk
+    );
 
-(*env)->ReleaseByteArrayElements(env, pkArr, pk, 0);
-(*env)->ReleaseByteArrayElements(env, skArr, sk, 0);
+    (*env)->ReleaseByteArrayElements(env, pkArr, pk, 0);
+    (*env)->ReleaseByteArrayElements(env, skArr, sk, 0);
 }
 
 // 2) sign
@@ -39,9 +44,9 @@ Java_com_example_app_MainActivity_mlDsa44Sign(
 
     size_t siglen;
     int ret = PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature(
-    (uint8_t*)sig, &siglen,
-    (const uint8_t*)msg, (size_t)mlen,
-    (const uint8_t*)sk
+        (uint8_t*)sig, &siglen,
+        (const uint8_t*)msg, (size_t)mlen,
+        (const uint8_t*)sk
     );
 
     (*env)->ReleaseByteArrayElements(env, msgArr, msg, JNI_ABORT);
@@ -64,9 +69,9 @@ Java_com_example_app_MainActivity_mlDsa44Verify(
     jbyte *pk  = (*env)->GetByteArrayElements(env, pkArr,  NULL);
 
     int ok = PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify(
-            (const uint8_t*)sig, (size_t)siglen,
-    (const uint8_t*)msg, (size_t)mlen,
-    (const uint8_t*)pk
+        (const uint8_t*)sig, (size_t)siglen,
+        (const uint8_t*)msg, (size_t)mlen,
+        (const uint8_t*)pk
     );
 
     (*env)->ReleaseByteArrayElements(env, sigArr, sig, JNI_ABORT);
