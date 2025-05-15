@@ -23,6 +23,13 @@ class _BroadcastingScreenState extends State<BroadcastingScreen> {
   @override
   void initState() {
     super.initState();
+    KeyUtils.getPublicKey().then((b64) {
+  final pub = base64Decode(b64);
+  final fp = pub.sublist(0,8)
+    .map((b) => b.toRadixString(16).padLeft(2,'0'))
+    .join(' ');
+  print('🔍 [STARTUP] loaded pubkey fingerprint: $fp');
+});
     _channel.setMethodCallHandler(_onMethodCall);
     _startAdvertising();
   }
