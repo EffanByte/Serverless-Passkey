@@ -42,11 +42,16 @@ Uint8List _encodeSignature(ECSignature sig) {
 
 class KeyUtils {
   static const _privateKeyKey = 'privateKeyPem';
-  static const _publicKeyX     = 'publicKeyX';
-  static const _publicKeyY     = 'publicKeyY';
+  static const _publicKeyX = 'publicKeyX';
+  static const _publicKeyY = 'publicKeyY';
 
   static const _secureStorage = FlutterSecureStorage();
 
+  static Future<void> deleteKeys() async {
+    await _secureStorage.delete(key: _privateKeyKey);
+    await _secureStorage.delete(key: _publicKeyX);
+    await _secureStorage.delete(key: _publicKeyY);
+  }
   /// Signs the given [challenge] (raw 16 bytes) with the stored P-256 private key,
   /// using deterministic ECDSA (RFC6979). Returns a 64-byte r∥s signature.
   /// Signs the given [challenge] with the stored P-256 EC private key,
@@ -79,25 +84,27 @@ class KeyUtils {
   /// and the public key coords (x,y) in Base64.
   static Future<void> generateAndStoreKeyPair() async {
     final keyParams = ECKeyGeneratorParameters(ECCurve_prime256v1());
-    final random = FortunaRandom()..seed(
-      KeyParameter(
-        Uint8List.fromList(
-          List.generate(32, (_) => DateTime.now().microsecond % 256),
-        ),
-      ),
-    );
-    final generator = ECKeyGenerator()..init(ParametersWithRandom(keyParams, random));
-    final pair      = generator.generateKeyPair();
-    final privKey   = pair.privateKey as ECPrivateKey;
-    final pubKey    = pair.publicKey as ECPublicKey;
+    final random =
+        FortunaRandom()..seed(
+          KeyParameter(
+            Uint8List.fromList(
+              List.generate(32, (_) => DateTime.now().microsecond % 256),
+            ),
+          ),
+        );
+    final generator =
+        ECKeyGenerator()..init(ParametersWithRandom(keyParams, random));
+    final pair = generator.generateKeyPair();
+    final privKey = pair.privateKey as ECPrivateKey;
+    final pubKey = pair.publicKey as ECPublicKey;
 
     final privPem = base64Encode(bigIntToBytes(privKey.d!));
-    final pubX    = base64Encode(bigIntToBytes(pubKey.Q!.x!.toBigInteger()!));
-    final pubY    = base64Encode(bigIntToBytes(pubKey.Q!.y!.toBigInteger()!));
+    final pubX = base64Encode(bigIntToBytes(pubKey.Q!.x!.toBigInteger()!));
+    final pubY = base64Encode(bigIntToBytes(pubKey.Q!.y!.toBigInteger()!));
 
     await _secureStorage.write(key: _privateKeyKey, value: privPem);
-    await _secureStorage.write(key: _publicKeyX,    value: pubX);
-    await _secureStorage.write(key: _publicKeyY,    value: pubY);
+    await _secureStorage.write(key: _publicKeyX, value: pubX);
+    await _secureStorage.write(key: _publicKeyY, value: pubY);
   }
 
   static Future<bool> isKeyGenerated() async =>
