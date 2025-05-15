@@ -95,8 +95,8 @@ class KeyUtils {
     final generator =
         ECKeyGenerator()..init(ParametersWithRandom(keyParams, random));
     final pair = generator.generateKeyPair();
-    final privKey = pair.privateKey as ECPrivateKey;
-    final pubKey = pair.publicKey as ECPublicKey;
+    final privKey = pair.privateKey;
+    final pubKey = pair.publicKey;
 
     final privPem = base64Encode(bigIntToBytes(privKey.d!));
     final pubX = base64Encode(bigIntToBytes(pubKey.Q!.x!.toBigInteger()!));

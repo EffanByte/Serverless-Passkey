@@ -39,11 +39,75 @@ export default function App() {
   const [charac, setCharac]         = useState(null)
   const [status, setStatus]         = useState('Idle')
   const [currentPage, setCurrentPage] = useState('login') // 'login', 'signup', or 'passkey'
+  const [isLoading, setIsLoading]    = useState(false)
+  const [error, setError]            = useState(null)
   const publicKeyRef                = useRef(null)
-  const deviceNameSignatureRef = useRef(null)
+  const deviceNameSignatureRef        = useRef(null)
   const challengeBufRef             = useRef(null)
   const pubKeyAccumulatedRef        = useRef('')
+  const deviceNameRef               = useRef('')
+  const publicKeyBase64Ref         = useRef('')
 
+  const handleSignup = async (userData, deviceData) => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      // First, register the user
+      const userResponse = await fetch('/api/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fullName: userData.username,
+          email: userData.email,
+          password: userData.password,
+          twoFactorEnabled: userData.enable2FA
+        }),
+      })
+
+      if (!userResponse.ok) {
+        const errorData = await userResponse.json()
+        throw new Error(errorData.message || 'Failed to register user')
+      }
+
+      const { user, token } = await userResponse.json()
+
+      // Then, register the device
+      const deviceResponse = await fetch('/api/register-device', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          publicKey: deviceData.publicKey,
+          deviceName: deviceData.deviceName
+        }),
+      })
+
+      if (!deviceResponse.ok) {
+        const errorData = await deviceResponse.json()
+        throw new Error(errorData.message || 'Failed to register device')
+      }
+
+      // Store the token in localStorage for future requests
+      localStorage.setItem('token', token)
+      
+      // Update status and redirect
+      setStatus('✅ Registration successful')
+      setCurrentPage('login')
+      
+      return { success: true, token }
+    } catch (err) {
+      console.error('Registration error:', err)
+      setError(err.message)
+      setStatus(`❌ Registration failed: ${err.message}`)
+      return { success: false, error: err.message }
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const connectToPhone = async () => {
     try {
@@ -104,24 +168,51 @@ export default function App() {
           false, ['verify']
         )
         publicKeyRef.current = key
+        // Store the base64-encoded public key for device registration
+        publicKeyBase64Ref.current = btoa(String.fromCharCode.apply(null, raw))
         setStatus('🔑 Public key imported')
+        pubKeyAccumulatedRef.current = ''
+        return
       } catch {
         pubKeyAccumulatedRef.current = combo
+        return
       }
-      return
     }
 
-    // 2. Device name + signature (plaintext name + 64-byte sig)
+    // 2. Device name + signature
     if (!deviceNameSignatureRef.current && bytes.length > 64) {
-      const sigBytes = bytes.slice(bytes.length - 64)
-      const nameBytes = bytes.slice(0, bytes.length - 64)
-      const deviceName = new TextDecoder().decode(nameBytes)
+      try {
+        const sigBytes = bytes.slice(bytes.length - 64)
+        const nameBytes = bytes.slice(0, bytes.length - 64)
+        let name
+        try {
+          name = new TextDecoder('utf-8').decode(nameBytes)
+          try {
+            JSON.parse(name)
+            console.log('Received JSON instead of device name, skipping...')
+            return
+          } catch {
+            // Not JSON, continue with the name
+          }
+        } catch (e) {
+          name = new TextDecoder('ascii').decode(nameBytes)
+        }
 
-      console.log('📛 Device name received:', deviceName)
-      console.log('✍️ Signature on name:', sigBytes)
-      setStatus(`📛 Device name: ${deviceName}`)
-      deviceNameSignatureRef.current = sigBytes
-      window.tempDeviceName = deviceName // ← store in global var if needed
+        if (!name || name.length === 0 || /[\x00-\x1F\x7F-\x9F]/.test(name)) {
+          console.error('Invalid device name received:', name)
+          return
+        }
+
+        console.log('📛 Device name received:', name)
+        deviceNameRef.current = name
+        window.tempDeviceName = name
+        setStatus(`📛 Device name: ${name}`)
+        deviceNameSignatureRef.current = sigBytes
+        return
+      } catch (error) {
+        console.error('Error processing device name:', error)
+        setStatus('❌ Error processing device name')
+      }
       return
     }
 
@@ -142,10 +233,11 @@ export default function App() {
     )
 
     console.log('💡 Challenge signature valid?', valid)
-    const name = window.tempDeviceName || 'Unknown'
-    const finalMsg = `✅ Signature valid — authentication successful\n📛 Device: ${name}`
-    setStatus(valid ? finalMsg : '❌ Signature invalid — authentication failed')
-
+    if (valid) {
+      const name = deviceNameRef.current || window.tempDeviceName || 'Unknown'
+      const finalMsg = `✅ Signature valid — authentication successful\n📛 Device: ${name}`
+      setStatus(valid ? finalMsg : '❌ Signature invalid — authentication failed')
+    }
   }
 
   const renderPage = () => {
@@ -153,7 +245,17 @@ export default function App() {
       case 'login':
         return <LoginPage />
       case 'signup':
-        return <SignupPage />
+        return (
+          <SignupPage 
+            onSignup={handleSignup}
+            deviceData={{
+              publicKey: publicKeyBase64Ref.current,
+              deviceName: deviceNameRef.current
+            }}
+            isLoading={isLoading}
+            error={error}
+          />
+        )
       case 'passkey':
         return (
           <PasskeyUI
@@ -163,11 +265,6 @@ export default function App() {
             onSendChallenge={sendChallengeAndReply}
           />
         )
-       case 'disconnected':
-          console.warn('🔌 BLE device disconnected')
-          setStatus('❌ Phone disconnected')
-          break
-
       default:
         return <LoginPage />
     }

@@ -10,7 +10,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'dart:io';
 
 class BroadcastingScreen extends StatefulWidget {
-  const BroadcastingScreen({Key? key}) : super(key: key);
+  const BroadcastingScreen({super.key});
 
   @override
   _BroadcastingScreenState createState() => _BroadcastingScreenState();

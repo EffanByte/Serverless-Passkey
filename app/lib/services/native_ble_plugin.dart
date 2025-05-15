@@ -1,6 +1,5 @@
 // lib/services/native_ble_plugin.dart
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:pointycastle/export.dart';
 import 'key_utils.dart'; // Make sure this file has the KeyUtils class
 import 'package:flutter/services.dart';
