@@ -106,45 +106,85 @@ const App = () => {
   return <LoginSignup onSuccess={handleLoginSuccess} />;
 };
 
-
-function PasskeyModal({ isOpen, onClose, connectToPhone, sendChallenge, status }) {
+function PasskeyModal({
+  isOpen,
+  onClose,
+  connectToPhone,
+  sendChallenge,
+  status,
+  deviceName
+}) {
   if (!isOpen) return null;
+
   return (
-    <div style={{
-      position: 'fixed', top:0,left:0,right:0,bottom:0,
-      background:'rgba(0,0,0,0.6)',
-      display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000
-    }}>
-      <div style={{ background:'#222',padding:'2rem',borderRadius:'12px',color:'#fff',maxWidth:400 }}>
-        <h2>Use Your Passkey</h2>
-        <p>Status: {status}</p>
+    <div
+      style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0, 0, 0, 0.6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000
+      }}
+    >
+      <div
+        style={{
+          background: '#222',
+          padding: '2rem',
+          borderRadius: '12px',
+          color: '#fff',
+          maxWidth: 400,
+          width: '90%',
+          boxSizing: 'border-box'
+        }}
+      >
+        <h2 style={{ marginTop: 0 }}>Use Your Passkey</h2>
+
+        <p style={{ marginBottom: '0.5rem' }}>
+          <strong>Device:</strong> {deviceName || 'Waiting for device name…'}
+        </p>
+        <p style={{ marginBottom: '1.5rem' }}>
+          <strong>Status:</strong> {status}
+        </p>
+
         <div style={styles.buttonContainer}>
           <button
             onClick={connectToPhone}
             style={{ ...styles.button, ...styles.primaryButton }}
-          >Connect to Phone</button>
+          >
+            Connect to Phone
+          </button>
           <button
             onClick={sendChallenge}
             disabled={!status.startsWith('Connected')}
             style={{
               ...styles.button,
               ...styles.secondaryButton,
-              ...(!status.startsWith('Connected') && styles.disabledButton)
+              ...(status.startsWith('Connected') ? {} : styles.disabledButton)
             }}
-          >Send Challenge & Reply</button>
+          >
+            Send Challenge &amp; Reply
+          </button>
         </div>
+
         <button
           onClick={onClose}
           style={{
-            marginTop:'1rem', ...styles.button,
-            background:'transparent', color:'#aaa'
+            marginTop: '1.5rem',
+            ...styles.button,
+            background: 'transparent',
+            color: '#aaa',
+            width: '100%'
           }}
-        >Cancel</button>
+        >
+          Cancel
+
+        </button>
       </div>
     </div>
   );
 }
-
 
 const LoginSignup = ({ onSuccess }) => {
   const [activeTab, setActiveTab] = useState('login');
@@ -157,6 +197,7 @@ const LoginSignup = ({ onSuccess }) => {
   const [enable2FA, setEnable2FA] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const [user2FAStatus, setUser2FAStatus] = useState(null);
+  const [deviceName, setDeviceName] = useState('');
 
   // BLE / Passkey state
   const [charac, setCharac] = useState(null);
@@ -185,6 +226,17 @@ const LoginSignup = ({ onSuccess }) => {
       console.error(err);
       setStatus('❌ ' + err.message);
     }
+  };
+  const sendChallenge = async () => {
+    if (!charac) {
+      setStatus('⚠️ Not connected yet!');
+      return;
+    }
+    const challenge = window.crypto.getRandomValues(new Uint8Array(16));
+    challengeBufRef.current = challenge.buffer;
+    setStatus(`Writing challenge (${challenge.length} bytes)…`);
+    await charac.writeValue(challenge);
+    console.log('▶️ Challenge sent:', challenge);
   };
 
 const handleNotification = async (event) => {
@@ -721,7 +773,16 @@ const handleNotification = async (event) => {
           </main>
         </div>
       </div>
-      {showPasskeyModal && <PasskeyModal />}
+       {showPasskeyModal && (
+         <PasskeyModal
+           isOpen={showPasskeyModal}
+           onClose={() => setShowPasskeyModal(false)}
+           connectToPhone={connectToPhone}
+           sendChallenge={sendChallenge}
+           status={status}
+           deviceName={deviceName}
+         />
+       )}
     </>
   );
 };
