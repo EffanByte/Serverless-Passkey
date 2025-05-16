@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react'
 import PasskeyUI from './components/PasskeyUI'
 import SignupPage from './components/SignupPage'
 import LoginPage from './components/LoginPage'
+import DashboardPage from './components/DashboardPage'
 import './App.css'
 
 const SERVICE_UUID        = '0000feed-0000-1000-8000-00805f9b34fb'
@@ -47,7 +48,115 @@ export default function App() {
   const pubKeyAccumulatedRef        = useRef('')
   const deviceNameRef               = useRef('')
   const publicKeyBase64Ref         = useRef('')
+  const deviceRef = useRef('')
+  const deviceNameSigRef = useRef('')
 
+    // Reset everything BLE / passkey–related
+ const resetPasskeyState = () => {
+   // BLE / passkey–related React state
+   setCharac(null)
+   setStatus('Idle')
+   setIsLoading(false)
+   setError(null)
+
+   // refs
+   publicKeyRef.current           = null
+   deviceNameSignatureRef.current = null
+   challengeBufRef.current        = null
+   pubKeyAccumulatedRef.current   = ''
+   deviceNameRef.current          = ''
+   publicKeyBase64Ref.current     = ''
+   deviceRef.current              = null
+   deviceNameSigRef.current       = null
+
+   // clear any stored auth data
+   localStorage.clear()
+ }
+
+
+
+
+const handleSignup = async (userData, deviceData) => {
+  setIsLoading(true);
+  setError(null);
+
+  try {
+    // Step 1: Precheck passkey availability
+    const precheckRes = await fetch('/api/precheck-passkey', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ publicKey: deviceData.publicKey }),
+    });
+
+    if (!precheckRes.ok) {
+      const errorData = await precheckRes.json();
+      throw new Error(errorData.message || 'Passkey already in use');
+    }
+
+    // Step 2: Register the user
+    const userResponse = await fetch('/api/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fullName: userData.username,
+        email: userData.email,
+        password: userData.password,
+        twoFactorEnabled: userData.enable2FA,
+      }),
+    });
+
+    if (!userResponse.ok) {
+      const errorData = await userResponse.json();
+      throw new Error(errorData.message || 'Failed to register user');
+    }
+
+    const { user, token } = await userResponse.json();
+
+    // Step 3: Register the device
+    const deviceResponse = await fetch('/api/register-device', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        publicKey: deviceData.publicKey,
+        deviceName: deviceData.deviceName,
+      }),
+    });
+
+    if (!deviceResponse.ok) {
+      // Rollback user if device registration fails
+      await fetch(`/api/users/${user.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const errorData = await deviceResponse.json();
+      throw new Error(errorData.message || 'Device registration failed — user rolled back');
+    }
+
+    // Step 4: Store token and finish
+    localStorage.setItem('token', token);
+    localStorage.setItem('fullName', user.fullName);
+    setStatus('✅ Registration successful');
+    setCurrentPage('login');
+    resetPasskeyState();
+
+    return { success: true, token };
+  } catch (err) {
+    console.error('Registration error:', err);
+    setError(err.message);
+    setStatus(`❌ Registration failed: ${err.message}`);
+    resetPasskeyState(); // Clear state after failure
+    return { success: false, error: err.message };
+  } finally {
+    setIsLoading(false);
+  }
+};
+
+
+/*
   const handleSignup = async (userData, deviceData) => {
     setIsLoading(true)
     setError(null)
@@ -93,11 +202,12 @@ export default function App() {
 
       // Store the token in localStorage for future requests
       localStorage.setItem('token', token)
-      
+
       // Update status and redirect
       setStatus('✅ Registration successful')
       setCurrentPage('login')
-      
+      resetPasskeyState()
+
       return { success: true, token }
     } catch (err) {
       console.error('Registration error:', err)
@@ -108,6 +218,7 @@ export default function App() {
       setIsLoading(false)
     }
   }
+*/
 
   const connectToPhone = async () => {
     try {
@@ -133,6 +244,16 @@ export default function App() {
       setStatus('❌ ' + err.message)
     }
   }
+
+//  When you’re done (e.g. after handleSubmit), disconnect:
+const disconnect = () => {
+  if (device?.gatt?.connected) {
+    device.gatt.disconnect()
+    setStatus('🔌 Disconnected')
+    setCharac(null)
+    setDevice(null)
+  }
+}
 
   const sendChallengeAndReply = async () => {
     if (!charac) {
@@ -218,6 +339,7 @@ export default function App() {
 
     // 3. Challenge signature
     const challenge = challengeBufRef.current
+
     const key = publicKeyRef.current
     if (!key || !challenge) {
       setStatus('⚠️ Missing key or challenge')
@@ -240,14 +362,19 @@ export default function App() {
     }
   }
 
+  const handleLogout = () => {
+    setCurrentPage('login')
+  }
+
   const renderPage = () => {
     switch (currentPage) {
       case 'login':
-        return <LoginPage />
+         return <LoginPage onLoginSuccess={() => setCurrentPage('dashboard')} />
       case 'signup':
         return (
-          <SignupPage 
+          <SignupPage
             onSignup={handleSignup}
+            onSignupSuccess={() => setCurrentPage('dashboard')}
             deviceData={{
               publicKey: publicKeyBase64Ref.current,
               deviceName: deviceNameRef.current
@@ -265,33 +392,46 @@ export default function App() {
             onSendChallenge={sendChallengeAndReply}
           />
         )
-      default:
-        return <LoginPage />
+        case 'dashboard':
+          return <DashboardPage onLogout={handleLogout} />
+        default:
+            return <LoginPage />
     }
   }
-
   return (
     <div className="app-container">
-      <nav className="navigation">
-        <button
-          className={`nav-button ${currentPage === 'login' ? 'active' : ''}`}
-          onClick={() => setCurrentPage('login')}
-        >
-          Login
-        </button>
-        <button
-          className={`nav-button ${currentPage === 'signup' ? 'active' : ''}`}
-          onClick={() => setCurrentPage('signup')}
-        >
-          Sign Up
-        </button>
-        <button
-          className={`nav-button ${currentPage === 'passkey' ? 'active' : ''}`}
-          onClick={() => setCurrentPage('passkey')}
-        >
-          Passkey
-        </button>
-      </nav>
+      {/* only render the nav when _not_ on dashboard */}
+      {currentPage !== 'dashboard' && (
+        <nav className="navigation">
+          <button
+            className={`nav-button ${currentPage === 'login' ? 'active' : ''}`}
+            onClick={() => {
+              resetPasskeyState()         // clear BLE/auth state
+              setCurrentPage('login')   // then navigate
+            }}
+          >
+            Login
+          </button>
+          <button
+            className={`nav-button ${currentPage === 'signup' ? 'active' : ''}`}
+            onClick={() => {
+              resetPasskeyState()
+              setCurrentPage('signup')
+            }}
+          >
+            Sign Up
+          </button>
+          <button
+            className={`nav-button ${currentPage === 'passkey' ? 'active' : ''}`}
+            onClick={() => {
+              resetPasskeyState()
+              setCurrentPage('passkey')
+            }}
+          >
+            Passkey
+          </button>
+        </nav>
+      )}
       {renderPage()}
     </div>
   )

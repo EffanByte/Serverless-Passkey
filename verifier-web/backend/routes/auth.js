@@ -36,12 +36,95 @@ function requireAuth(req, res, next) {
   }
 }
 
+router.post('/precheck-passkey', async (req, res) => {
+  const { publicKey } = req.body;
+  if (!publicKey) {
+    return res.status(400).json({ message: 'publicKey is required' });
+  }
+
+  try {
+    const conflict = await Device.findOne({ publicKey });
+    if (conflict) {
+      return res.status(409).json({ message: 'That passkey is already registered to another account' });
+    }
+    return res.json({ available: true });
+  } catch (err) {
+    console.error('Precheck-passkey error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+router.delete('/users/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Only allow deletion if requester owns the account
+    if (user._id.toString() !== req.userId) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+
+    await Device.deleteMany({ userId: user._id }); // Clean up associated devices
+    await user.deleteOne();
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// Add this after `requireAuth` and before `module.exports = router;`
+
+// Register a passkey device
+// routes/device.js (or wherever you have this)
+router.post('/register-device', requireAuth, async (req, res) => {
+  const userId = req.userId;
+  const { publicKey, deviceName } = req.body;
+  console.log('🔐 Incoming publicKey:', publicKey);
+  if (!publicKey) {
+    return res.status(400).json({ message: 'publicKey is required' });
+  }
+  try {
+    // Only look for an existing record with the same publicKey
+    const conflict = await Device.findOne({ publicKey });
+
+    // If that key belongs to someone else → conflict
+    if (conflict && conflict.userId.toString() !== userId) {
+      return res
+        .status(409)
+        .json({ message: 'That passkey is already registered to another account' });
+    }
+
+    // Upsert this user's device record, now including the deviceName
+    await Device.findOneAndUpdate(
+      { userId },
+      { publicKey, deviceName, userId },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Register-device error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
 // Disable password-only login
+/*
 router.post('/login', (req, res) => {
   return res
     .status(405)
     .json({ message: 'Password-only login disabled. Use Passkey login instead.' });
 });
+*/
 
 // Sign-up: Create user with Argon2id-hashed password & return JWT
 router.post('/signup', async (req, res) => {
@@ -134,4 +217,89 @@ router.post('/verify-signature', async (req, res) => {
   }
 });
 
-module.exports = router; 
+
+
+// Check email and 2FA status
+router.post('/check-email', async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ message: 'Email is required' });
+  }
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'No account found for that email' });
+    }
+
+    return res.json({
+      exists: true,
+      hasTwoFactor: user.twoFactorEnabled
+    });
+  } catch (err) {
+    console.error('Check email error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Login with passkey and optional password
+router.post('/login', async (req, res) => {
+  const { email, password, publicKey, deviceName } = req.body;
+  if (!email || !publicKey || !deviceName) {
+    return res
+      .status(400)
+      .json({ message: 'Email, publicKey, and deviceName are required' });
+  }
+
+  try {
+    // 1) Fetch user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'No account found for that email' });
+    }
+
+    // 2) If 2FA is enabled, verify password
+    if (user.twoFactorEnabled) {
+      if (!password) {
+        return res.status(400).json({ message: 'Password required for two-factor login' });
+      }
+      const pwdOk = await user.verifyPassword(password);
+      if (!pwdOk) {
+        return res.status(401).json({ message: 'Invalid password' });
+      }
+    }
+
+    // 3) Verify that this exact publicKey belongs to that user
+    const device = await Device.findOne({
+      userId: user._id,
+      publicKey,
+      deviceName
+    });
+    if (!device) {
+      return res
+        .status(404)
+        .json({ message: 'No passkey registered for this device' });
+    }
+
+
+    // 4) All good → issue JWT
+    const token = signToken({ userId: user._id });
+    return res.json({
+      success: true,
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        twoFactorEnabled: user.twoFactorEnabled
+      },
+      token
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+module.exports = router;

@@ -5,7 +5,7 @@ import Starfield from '../Starfield'
 const SERVICE_UUID = '0000feed-0000-1000-8000-00805f9b34fb'
 const CHARACTERISTIC_UUID = '0000beef-0000-1000-8000-00805f9b34fb'
 
-const SignupPage = ({ onSignup, isLoading, error }) => {
+const SignupPage = ({ onSignup, onSignupSuccess, isLoading, error }) => {
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -19,6 +19,7 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
   const [charac, setCharac] = useState(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [publicKey, setPublicKey] = useState(null)
+  const [device, setDevice] = useState(null)
   const [deviceNameSignature, setDeviceNameSignature] = useState(null)
   const [challengeBuf, setChallengeBuf] = useState(null)
   const [pubKeyAccumulated, setPubKeyAccumulated] = useState('')
@@ -26,7 +27,7 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
   const [publicKeyBase64, setPublicKeyBase64] = useState('')
   const [finalDeviceName, setFinalDeviceName] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
-  
+
   // Using refs to maintain values between renders
   const publicKeyRef = useRef(null)
   const deviceNameRef = useRef('')
@@ -40,6 +41,15 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
       console.log('Device name updated in state:', deviceName)
     }
   }, [deviceName])
+
+  useEffect(() => {
+    pubKeyAccumulatedRef.current = pubKeyAccumulated
+  }, [pubKeyAccumulated])
+
+  useEffect(() => {
+    challengeBufRef.current = challengeBuf
+  }, [challengeBuf])
+
 
   // Effect to log device name ref changes
   useEffect(() => {
@@ -59,188 +69,195 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
     setEnable2FA(e.target.checked)
   }
 
-  const connectToPhone = async () => {
-    try {
-      setStatus('Requesting device…')
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [SERVICE_UUID] }],
-      })
-      const initialDeviceName = device.name || 'unknown device'
-      console.log('Initial device name from connection:', initialDeviceName)
-      setStatus(`Connecting to ${initialDeviceName}…`)
-      const server = await device.gatt.connect()
-      setStatus('Getting service…')
-      const service = await server.getPrimaryService(SERVICE_UUID)
-      setStatus('Getting characteristic…')
-      const c = await service.getCharacteristic(CHARACTERISTIC_UUID)
+ const connectToPhone = async () => {
+     try {
+       setStatus('Requesting device…')
+       const device = await navigator.bluetooth.requestDevice({
+         filters: [{ services: [SERVICE_UUID] }],
+       })
+       const initialDeviceName = device.name || 'unknown device'
+       console.log('Initial device name from connection:', initialDeviceName)
+       setStatus(`Connecting to ${initialDeviceName}…`)
+       const server = await device.gatt.connect()
+       setStatus('Getting service…')
+       const service = await server.getPrimaryService(SERVICE_UUID)
+       setStatus('Getting characteristic…')
+       const c = await service.getCharacteristic(CHARACTERISTIC_UUID)
 
-      setStatus('Subscribing to notifications…')
-      await c.startNotifications()
-      c.addEventListener('characteristicvaluechanged', handleNotification)
+       setStatus('Subscribing to notifications…')
+       await c.startNotifications()
+       c.addEventListener('characteristicvaluechanged', handleNotification)
 
-      setCharac(c)
-      setStatus('Connected! Ready to send.')
-    } catch (err) {
-      console.error(err)
-      setStatus('❌ ' + err.message)
-    }
+       setCharac(c)
+       setStatus('Connected! Ready to send.')
+     } catch (err) {
+       console.error(err)
+       setStatus('❌ ' + err.message)
+     }
+   }
+
+
+// When you’re done (e.g. after handleSubmit), disconnect:
+const disconnect = () => {
+  if (device?.gatt?.connected) {
+    device.gatt.disconnect()
+    setStatus('🔌 Disconnected')
+    setCharac(null)
+    setDevice(null)
   }
+}
 
-  const sendChallengeAndReply = async () => {
-    if (!charac) {
-      alert('Not connected yet!')
-      return
-    }
-    const challenge = window.crypto.getRandomValues(new Uint8Array(16))
-    challengeBufRef.current = challenge.buffer
-    setChallengeBuf(challenge.buffer)
-    setStatus(`Writing challenge (${challenge.length} bytes)…`)
-    await charac.writeValue(challenge)
-    console.log('▶️ Challenge sent:', challenge)
-  }
+   const sendChallengeAndReply = async () => {
+     if (!charac) {
+       alert('Not connected yet!')
+       return
+     }
+     const challenge = window.crypto.getRandomValues(new Uint8Array(16))
+     challengeBufRef.current = challenge.buffer
+     setChallengeBuf(challenge.buffer)
+     setStatus(`Writing challenge (${challenge.length} bytes)…`)
+     await charac.writeValue(challenge)
+     console.log('▶️ Challenge sent:', challenge)
+   }
 
-  const handleNotification = async (event) => {
-    const bytes = new Uint8Array(event.target.value.buffer)
-    console.log('🔔 Raw notification chunk:', bytes)
+   const handleNotification = async (event) => {
+     const bytes = new Uint8Array(event.target.value.buffer)
+     console.log('🔔 Raw notification chunk:', bytes)
 
-    // 1. Public Key
-    if (!publicKeyRef.current) {
-      const chunk = new TextDecoder().decode(bytes)
-      const combo = pubKeyAccumulatedRef.current + chunk
-      try {
-        const { x, y } = JSON.parse(combo)
-        const xBytes = Uint8Array.from(atob(x), c => c.charCodeAt(0))
-        const yBytes = Uint8Array.from(atob(y), c => c.charCodeAt(0))
-        const raw = new Uint8Array(1 + xBytes.length + yBytes.length)
-        raw[0] = 0x04
-        raw.set(xBytes, 1)
-        raw.set(yBytes, 1 + xBytes.length)
-        const key = await window.crypto.subtle.importKey(
-          'raw', raw.buffer,
-          { name: 'ECDSA', namedCurve: 'P-256' },
-          false, ['verify']
-        )
-        publicKeyRef.current = key
-        setPublicKey(key)
-        setPublicKeyBase64(btoa(String.fromCharCode.apply(null, raw)))
-        setStatus('🔑 Public key imported')
-        pubKeyAccumulatedRef.current = ''
-        return
-      } catch {
-        pubKeyAccumulatedRef.current = combo
-        setPubKeyAccumulated(combo)
-        return
-      }
-    }
+     // 1) PUBLIC KEY CHUNKS → JSON → raw CryptoKey
+     if (!publicKeyRef.current) {
+       const chunk = new TextDecoder().decode(bytes)
+       const combo = pubKeyAccumulatedRef.current + chunk
 
-    // 2. Device name + signature
+       try {
+         const { x, y } = JSON.parse(combo)
+         const xBytes = Uint8Array.from(atob(x), c => c.charCodeAt(0))
+         const yBytes = Uint8Array.from(atob(y), c => c.charCodeAt(0))
+         const raw = new Uint8Array(1 + xBytes.length + yBytes.length)
+         raw[0] = 0x04
+         raw.set(xBytes, 1)
+         raw.set(yBytes, 1 + xBytes.length)
+
+         // import as ECDSA P-256 verify key
+         const key = await window.crypto.subtle.importKey(
+           'raw',
+           raw.buffer,
+           { name: 'ECDSA', namedCurve: 'P-256' },
+           true,
+           ['verify']
+         )
+
+         publicKeyRef.current = key
+         setPublicKey(key)
+         setStatus('🔑 Public key imported')
+         pubKeyAccumulatedRef.current = ''
+       } catch {
+         // still accumulating
+         pubKeyAccumulatedRef.current = combo
+         setPubKeyAccumulated(combo)
+       }
+
+       return
+     }
+
+    // 2) DEVICE NAME + SIGNATURE
     if (!deviceNameSignature && bytes.length > 64) {
       try {
-        // Get the signature bytes (last 64 bytes)
-        const sigBytes = bytes.slice(bytes.length - 64)
-        // Get the name bytes (everything before the signature)
-        const nameBytes = bytes.slice(0, bytes.length - 64)
-        
-        // Log raw bytes for debugging
-        console.log('Raw name bytes:', nameBytes)
-        console.log('Raw signature bytes:', sigBytes)
-        
-        // Try to decode the name bytes
-        let name
+        const sigBytes  = bytes.slice(bytes.length - 64);
+        const nameBytes = bytes.slice(0, bytes.length - 64);
+
+        // decode name (UTF-8 fallback to ASCII)
+        let name;
         try {
-          // First try UTF-8
-          name = new TextDecoder('utf-8').decode(nameBytes)
-          console.log('UTF-8 decoded name:', name)
-          
-          // Check if the decoded name is actually JSON (public key data)
-          try {
-            JSON.parse(name)
-            console.log('Received JSON instead of device name, skipping...')
-            return
-          } catch {
-            // Not JSON, continue with the name
+          name = new TextDecoder('utf-8').decode(nameBytes);
+          // if it parses as JSON, it's not a plain name
+          if (JSON.parse(name)) {
+            console.log('…got JSON, not a name…');
+            name = null;
           }
-        } catch (e) {
-          console.log('UTF-8 decode failed, trying ASCII:', e)
-          // Fallback to ASCII
-          name = new TextDecoder('ascii').decode(nameBytes)
-          console.log('ASCII decoded name:', name)
+        } catch {
+          name = new TextDecoder('ascii').decode(nameBytes);
         }
 
-        // Validate the name is not empty and contains reasonable characters
-        if (!name || name.length === 0 || /[\x00-\x1F\x7F-\x9F]/.test(name)) {
-          console.error('Invalid device name received:', name)
-          return
+        if (!name || /[\x00-\x1F\x7F-\x9F]/.test(name)) {
+          console.error('Invalid device name:', name);
+          return;
         }
 
-        console.log('📛 Device name received:', name)
-        console.log('✍️ Signature on name:', sigBytes)
-        
-        // Store device name in multiple places to ensure it's captured
-        setDeviceName(name)
-        setFinalDeviceName(name)
-        deviceNameRef.current = name
-        window.tempDeviceName = name
-        hasReceivedDeviceNameRef.current = true
-        
-        setStatus(`📛 Device name: ${name}`)
-        setDeviceNameSignature(sigBytes)
-        
-        // Verify device name was stored
-        console.log('Device name storage verification:', {
-          state: deviceName,
-          ref: deviceNameRef.current,
-          global: window.tempDeviceName,
-          hasReceived: hasReceivedDeviceNameRef.current
-        })
-      } catch (error) {
-        console.error('Error processing device name:', error)
-        setStatus('❌ Error processing device name')
+        // store locally
+        setDeviceName(name);
+        deviceNameRef.current = name;
+        setFinalDeviceName(name);                    // ← ensure finalDeviceName is set
+        hasReceivedDeviceNameRef.current = true;
+        setStatus(`📛 Device name: ${name}`);
+        setDeviceNameSignature(sigBytes);
+
+        // export SPKI → base64
+        const spkiBuf = await window.crypto.subtle.exportKey(
+          'spki',
+          publicKeyRef.current
+        );
+        const spkiB64 = btoa(
+          String.fromCharCode(...new Uint8Array(spkiBuf))
+        );
+
+        // store it in local state
+        setPublicKeyBase64(spkiB64);                // ← use the correct setter
+      } catch (err) {
+        console.error('Error processing device name:', err);
+        setStatus('❌ Error processing device name');
       }
-      return
+
+      return;
     }
 
-    // 3. Challenge signature
-    const challenge = challengeBufRef.current
-    const key = publicKeyRef.current
-    if (!key || !challenge) {
-      setStatus('⚠️ Missing key or challenge')
-      return
-    }
+     // 3) CHALLENGE SIGNATURE VERIFICATION
+     const challenge = challengeBufRef.current
+     const key       = publicKeyRef.current
+     if (!key || !challenge) {
+       setStatus('⚠️ Missing key or challenge')
+       return
+     }
 
-    const derSig = bytes
-    const valid = await window.crypto.subtle.verify(
-      { name: 'ECDSA', hash: 'SHA-256' },
-      key,
-      derSig,
-      challenge
-    )
+     const valid = await window.crypto.subtle.verify(
+       { name: 'ECDSA', hash: 'SHA-256' },
+       key,
+       bytes,            // DER‐encoded signature
+       challenge         // original Uint8Array.buffer
+     )
 
-    console.log('💡 Challenge signature valid?', valid)
-    if (valid) {
-      setIsAuthenticated(true)
-      
-      // Get device name from all possible sources
-      const name = deviceNameRef.current || deviceName || window.tempDeviceName || 'Unknown'
-      console.log('Final device name used:', name)
-      
-      const successMessage = `✅ Authentication successful\n📛 Device: ${name}`
-      console.log('Success message:', successMessage)
-      
-      setStatus(successMessage)
-      setShowPasskeyMenu(false)
-      
-      // Final verification of device name
-      console.log('Final device name verification:', {
-        state: deviceName,
-        ref: deviceNameRef.current,
-        global: window.tempDeviceName,
-        hasReceived: hasReceivedDeviceNameRef.current
-      })
-    } else {
-      setStatus('❌ Authentication failed')
-    }
-  }
+     console.log('💡 Challenge signature valid?', valid)
+     if (valid) {
+       setIsAuthenticated(true)
+       const finalName = deviceNameRef.current || window.tempDeviceName || 'Unknown'
+       setStatus(`✅ Authentication successful\n📛 Device: ${finalName}`)
+       setShowPasskeyMenu(false)
+       disconnect()
+     } else {
+       setStatus('❌ Authentication failed')
+     }
+   }
+
+   // resets everything related to the BLE/passkey dance
+   const resetPasskeyState = () => {
+     setIsAuthenticated(false)
+     setCharac(null)
+     setDevice(null)
+     setDeviceName('')
+     deviceNameRef.current = ''
+     setDeviceNameSignature(null)
+     setChallengeBuf(null)
+     challengeBufRef.current = null
+     setPubKeyAccumulated('')
+     pubKeyAccumulatedRef.current = ''
+     publicKeyRef.current = null
+     setPublicKey(null)
+     setPublicKeyBase64('')
+     setFinalDeviceName('')
+     setShowPasskeyMenu(false)
+     setStatus('Idle')
+   }
+
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -264,19 +281,22 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
       if (result.success) {
         setSuccessMessage('✅ Registration successful! You can now log in.')
         setStatus('✅ Registration successful!')
+        resetPasskeyState()
+        onSignupSuccess()
       } else {
         setStatus(`❌ Registration failed: ${result.error}`)
       }
     } catch (err) {
       console.error('Signup error:', err)
       setStatus(`❌ Registration failed: ${err.message}`)
+      resetPasskeyState()
     }
   }
 
   const isFormValid = () => {
-    return formData.username && 
-           formData.email && 
-           formData.password && 
+    return formData.username &&
+           formData.email &&
+           formData.password &&
            formData.confirmPassword === formData.password
   }
 
@@ -328,7 +348,7 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
                   <input
                     type="text"
                     name="username"
-                    placeholder="Username"
+                    placeholder="Full Name"
                     value={formData.username}
                     onChange={handleChange}
                     className="input"
@@ -368,10 +388,10 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
                     required
                   />
                 </div>
-                <div style={{ 
-                  marginBottom: '1.5rem', 
-                  width: '100%', 
-                  display: 'flex', 
+                <div style={{
+                  marginBottom: '1.5rem',
+                  width: '100%',
+                  display: 'flex',
                   alignItems: 'center',
                   gap: '0.5rem'
                 }}>
@@ -384,8 +404,8 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
                     />
                     Enable Two-Factor Authentication
                   </label>
-                  <div 
-                    style={{ 
+                  <div
+                    style={{
                       position: 'relative',
                       cursor: 'help'
                     }}
@@ -407,9 +427,9 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
                         fontSize: '0.9rem',
                         zIndex: 1000
                       }}>
-                        {enable2FA 
-                          ? "With 2FA enabled, you'll need both your password and biometric for login"
-                          : "Without 2FA, you'll only need biometric for login"}
+                        {enable2FA
+                          ? "With 2FA enabled, you'll need both your password and biometrics for login"
+                          : "Without 2FA, you'll only need biometrics for login"}
                       </div>
                     )}
                   </div>
@@ -454,10 +474,10 @@ const SignupPage = ({ onSignup, isLoading, error }) => {
                     </div>
                   )}
                 </div>
-                <button 
-                  type="submit" 
-                  className="button primaryButton" 
-                  style={{ 
+                <button
+                  type="submit"
+                  className="button primaryButton"
+                  style={{
                     width: '100%',
                     opacity: (isFormValid() && isAuthenticated && !isLoading) ? 1 : 0.5,
                     cursor: (isFormValid() && isAuthenticated && !isLoading) ? 'pointer' : 'not-allowed'

@@ -27,28 +27,49 @@ function requireAuth(req, res, next) {
 }
 
 // Register Passkey (device) for the logged-in user
+// Register Passkey (device) for the logged-in user
 router.post('/register-device', requireAuth, async (req, res) => {
   const userId = req.userId;
-  const { publicKey, deviceName = '' } = req.body;
-  if (!publicKey) {
-    return res.status(400).json({ message: 'publicKey is required' });
+  const { publicKey, deviceName } = req.body;
+
+  if (!publicKey || !deviceName) {
+    return res
+      .status(400)
+      .json({ message: 'publicKey and deviceName are both required' });
   }
+
   try {
+    // 1) Does this key OR this name already exist on ANY account?
     const conflict = await Device.findOne({ publicKey });
+
+    // 2) If it exists and belongs to someone else → conflict
     if (conflict && conflict.userId.toString() !== userId) {
-      return res.status(409).json({ message: 'This passkey is already in use' });
+      return res
+        .status(409)
+        .json({
+          message:
+            'That passkey or device name is already registered to another account'
+        });
     }
+
+    // 3) Upsert for *this* userId
     await Device.findOneAndUpdate(
       { userId },
-      { publicKey, userId, deviceName },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { publicKey, deviceName, userId },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true
+      }
     );
+
     return res.json({ success: true });
   } catch (err) {
     console.error('Register-device error:', err);
     return res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 // Get user's registered devices
 router.get('/devices', requireAuth, async (req, res) => {
