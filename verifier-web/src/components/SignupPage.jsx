@@ -27,6 +27,7 @@ const SignupPage = ({ onSignup, onSignupSuccess, isLoading, error }) => {
   const [publicKeyBase64, setPublicKeyBase64] = useState('')
   const [finalDeviceName, setFinalDeviceName] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [localError, setLocalError] = useState(null)
 
   // Using refs to maintain values between renders
   const publicKeyRef = useRef(null)
@@ -255,7 +256,7 @@ const disconnect = () => {
      setPublicKeyBase64('')
      setFinalDeviceName('')
      setShowPasskeyMenu(false)
-     setStatus('Idle')
+     //setStatus('Idle')
    }
 
 
@@ -288,8 +289,9 @@ const disconnect = () => {
       }
     } catch (err) {
       console.error('Signup error:', err)
-      setStatus(`❌ Registration failed: ${err.message}`)
       resetPasskeyState()
+      setStatus(`❌ Registration failed: ${err.message}`)
+      //resetPasskeyState()
     }
   }
 
@@ -331,18 +333,19 @@ const disconnect = () => {
                   {successMessage}
                 </div>
               )}
-              {error && (
-                <div style={{
-                  backgroundColor: 'rgba(255, 0, 0, 0.1)',
-                  color: '#ff4444',
-                  padding: '1rem',
-                  borderRadius: '8px',
-                  marginBottom: '1rem',
-                  textAlign: 'left'
-                }}>
-                  {error}
-                </div>
-              )}
+{status && status.startsWith('❌') && (
+  <div style={{
+    backgroundColor: 'rgba(255, 0, 0, 0.1)',
+    color: '#ff4444',
+    padding: '1rem',
+    borderRadius: '8px',
+    marginBottom: '1rem',
+    textAlign: 'left'
+  }}>
+    {status}
+  </div>
+)}
+
               <form onSubmit={handleSubmit} style={{ width: '100%' }}>
                 <div style={{ marginBottom: '1rem', width: '100%' }}>
                   <input
