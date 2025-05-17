@@ -421,15 +421,7 @@ const disconnect = () => {
           >
             Sign Up
           </button>
-          <button
-            className={`nav-button ${currentPage === 'passkey' ? 'active' : ''}`}
-            onClick={() => {
-              resetPasskeyState()
-              setCurrentPage('passkey')
-            }}
-          >
-            Passkey
-          </button>
+
         </nav>
       )}
       {renderPage()}
