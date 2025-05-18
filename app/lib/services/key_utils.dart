@@ -83,6 +83,51 @@ class KeyUtils {
   /// Generates a P-256 keypair, stores the private scalar (d) in secure storage
   /// and the public key coords (x,y) in Base64.
   static Future<void> generateAndStoreKeyPair() async {
+    // Step 1: Delete any previously stored keys to ensure fresh generation
+    await deleteKeys();
+
+    // Step 2: Set up domain parameters for prime256v1
+    final domainParams = ECDomainParameters('prime256v1');
+
+    // Step 3: Initialize a secure random number generator
+    final secureRandom = FortunaRandom()
+      ..seed(KeyParameter(
+        Uint8List.fromList(
+          List.generate(32, (_) => DateTime.now().microsecondsSinceEpoch.remainder(256)),
+        ),
+      ));
+
+    // Step 4: Create the key generator and initialize it with domain params
+    final generator = ECKeyGenerator()
+      ..init(ParametersWithRandom(
+        ECKeyGeneratorParameters(domainParams),
+        secureRandom,
+      ));
+
+    // Step 5: Generate the key pair
+    final pair = generator.generateKeyPair();
+    final privKey = pair.privateKey as ECPrivateKey;
+    final pubKey = pair.publicKey as ECPublicKey;
+
+    // Step 6: Convert components to Base64
+    final privPem = base64Encode(bigIntToBytes(privKey.d!));
+    final pubX = base64Encode(bigIntToBytes(pubKey.Q!.x!.toBigInteger()!));
+    final pubY = base64Encode(bigIntToBytes(pubKey.Q!.y!.toBigInteger()!));
+
+    // 🧪 Log for verification
+    print('🔑 Private key (base64): $privPem');
+    print('🔓 Public key X (base64): $pubX');
+    print('🔓 Public key Y (base64): $pubY');
+
+    // Step 7: Save to secure storage
+    await _secureStorage.write(key: _privateKeyKey, value: privPem);
+    await _secureStorage.write(key: _publicKeyX, value: pubX);
+    await _secureStorage.write(key: _publicKeyY, value: pubY);
+  }
+
+
+  /*
+  static Future<void> generateAndStoreKeyPair() async {
     final keyParams = ECKeyGeneratorParameters(ECCurve_prime256v1());
     final random =
         FortunaRandom()..seed(
@@ -95,8 +140,8 @@ class KeyUtils {
     final generator =
         ECKeyGenerator()..init(ParametersWithRandom(keyParams, random));
     final pair = generator.generateKeyPair();
-    final privKey = pair.privateKey as ECPrivateKey;
-    final pubKey = pair.publicKey as ECPublicKey;
+    final privKey = pair.privateKey;
+    final pubKey = pair.publicKey;
 
     final privPem = base64Encode(bigIntToBytes(privKey.d!));
     final pubX = base64Encode(bigIntToBytes(pubKey.Q!.x!.toBigInteger()!));
@@ -106,6 +151,7 @@ class KeyUtils {
     await _secureStorage.write(key: _publicKeyX, value: pubX);
     await _secureStorage.write(key: _publicKeyY, value: pubY);
   }
+  */
 
   static Future<bool> isKeyGenerated() async =>
       _secureStorage.containsKey(key: _privateKeyKey);
@@ -119,3 +165,5 @@ class KeyUtils {
   static Future<String?> getPrivateKeyPem() async =>
       _secureStorage.read(key: _privateKeyKey);
 }
+
+

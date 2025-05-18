@@ -1,14 +1,8 @@
-import 'dart:convert';            // for base64Encode/base64Decode
-import 'dart:typed_data';         // for Uint8List
+// for base64Encode/base64Decode
+// for Uint8List
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';  // needed for MethodChannel
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:app/screens/generate_key_screen.dart';
-import 'package:app/screens/home_screen.dart';
+// needed for MethodChannel
 import 'package:app/screens/splash_screen.dart';
-import 'package:app/widgets/app_scaffold.dart';
-import 'package:app/services/native_ble_plugin.dart';
-import 'package:app/services/key_utils.dart';
 
 
 void main() {
